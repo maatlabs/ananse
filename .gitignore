@@ -1,1 +1,9 @@
-/target
+# IDE and editor files
+.vscode/
+.idea/
+
+# MacOS-specific files
+.DS_Store
+
+# From Cargo
+target
