@@ -2,6 +2,10 @@
 
 The _Maat_ Virtual Machine
 
+## Contributing
+
+Thank you for your interest in contributing to this project! All contributions large and small are actively accepted. To get started, please read the [contribution guidelines](#contributing). A good place to start would be [Good First Issues](https://github.com/maatlabs/mvm/labels/good%20first%20issue).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](./LICENSE-APACHE) or [MIT license](./LICENSE-MIT) at your option.
