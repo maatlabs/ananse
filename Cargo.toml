@@ -1,6 +1,22 @@
 [package]
 name = "mvm"
 version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mvm"
+path = "src/main.rs"
+
+[workspace.package]
 edition = "2024"
+repository = "https://github.com/maatlabs/mvm"
+license = "MIT OR Apache 2.0"
+
+[workspace]
+members = []
+
+[workspace.dependencies]
 
 [dependencies]
