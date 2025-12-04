@@ -1,6 +1,7 @@
 [package]
 name = "mvm"
 version = "0.1.0"
+description = "Maat Virtual Machine: WASM-based zero-knowledge virtual machine (zkVM)"
 edition.workspace = true
 repository.workspace = true
 license.workspace = true

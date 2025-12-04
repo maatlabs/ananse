@@ -1,6 +1,6 @@
 # MVM
 
-The _Maat_ Virtual Machine
+The _Maat_ Virtual Machine, a WASM-based zero-knowledge virtual machine (zkVM).
 
 ## Contributing
 
