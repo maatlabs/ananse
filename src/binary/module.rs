@@ -1,4 +1,3 @@
-use super::{FuncType, Function, Instruction, Opcode, SectionCode, ValueType};
 use nom::IResult;
 use nom::bytes::complete::{tag, take};
 use nom::multi::many0;
@@ -6,6 +5,8 @@ use nom::number::complete::{le_u8, le_u32};
 use nom::sequence::pair;
 use nom_leb128::leb128_u32;
 use num_traits::FromPrimitive as _;
+
+use super::{FuncType, Function, Instruction, Opcode, SectionCode, ValueType};
 
 const WASM_BINARY_MAGIC: &str = "\0asm";
 const WASM_BINARY_VERSION: u32 = 1;
@@ -192,9 +193,8 @@ fn decode_instructions(input: &[u8]) -> IResult<&[u8], Instruction> {
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::FunctionLocal;
-
     use super::*;
+    use crate::binary::FunctionLocal;
 
     #[test]
     fn decode_simplest_module() -> anyhow::Result<()> {
