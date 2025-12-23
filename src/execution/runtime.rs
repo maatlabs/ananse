@@ -1,4 +1,4 @@
-use super::{FuncInst, InternalFuncInst, Store, Value};
+use super::{ExternalFuncInst, FuncInst, Import, InternalFuncInst, Store, Value};
 use crate::binary::instruction::Instruction;
 use crate::binary::module::Module;
 use crate::binary::types::{ExportDesc, ValueType};
@@ -17,6 +17,7 @@ pub struct Runtime {
     pub store: Store,
     pub stack: Vec<Value>,
     pub call_stack: Vec<Frame>,
+    pub import: Import,
 }
 
 impl Runtime {
@@ -27,6 +28,17 @@ impl Runtime {
             store,
             ..Default::default()
         })
+    }
+
+    pub fn add_import(
+        &mut self,
+        module_name: impl Into<String>,
+        func_name: impl Into<String>,
+        func: impl FnMut(&mut Store, Vec<Value>) -> anyhow::Result<Option<Value>> + 'static,
+    ) -> anyhow::Result<()> {
+        let import = self.import.entry(module_name.into()).or_default();
+        import.insert(func_name.into(), Box::new(func));
+        Ok(())
     }
 
     pub fn call(
@@ -52,7 +64,41 @@ impl Runtime {
         }
         match func_inst {
             FuncInst::Internal(func) => self.invoke_internal(func.clone()),
+            FuncInst::External(func) => self.invoke_external(func.clone()),
         }
+    }
+
+    fn invoke_internal(&mut self, func: InternalFuncInst) -> anyhow::Result<Option<Value>> {
+        let arity = func.func_type.results.len();
+
+        self.push_frame(&func);
+
+        if let Err(e) = self.execute() {
+            self.cleanup();
+            anyhow::bail!("failed to execute instructions: {e}");
+        }
+
+        if arity > 0 {
+            let Some(value) = self.stack.pop() else {
+                anyhow::bail!("not found return value");
+            };
+            return Ok(Some(value));
+        }
+        Ok(None)
+    }
+
+    fn invoke_external(&mut self, func: ExternalFuncInst) -> anyhow::Result<Option<Value>> {
+        let args = self
+            .stack
+            .split_off(self.stack.len() - func.func_type.params.len());
+        let module = self
+            .import
+            .get_mut(&func.module)
+            .ok_or(anyhow::anyhow!("not found module"))?;
+        let import_func = module
+            .get_mut(&func.func)
+            .ok_or(anyhow::anyhow!("not found function"))?;
+        import_func(&mut self.store, args)
     }
 
     fn push_frame(&mut self, func: &InternalFuncInst) {
@@ -77,25 +123,6 @@ impl Runtime {
         };
 
         self.call_stack.push(frame);
-    }
-
-    fn invoke_internal(&mut self, func: InternalFuncInst) -> anyhow::Result<Option<Value>> {
-        let arity = func.func_type.results.len();
-
-        self.push_frame(&func);
-
-        if let Err(e) = self.execute() {
-            self.cleanup();
-            anyhow::bail!("failed to execute instructions: {e}");
-        }
-
-        if arity > 0 {
-            let Some(value) = self.stack.pop() else {
-                anyhow::bail!("not found return value");
-            };
-            return Ok(Some(value));
-        }
-        Ok(None)
     }
 
     fn execute(&mut self) -> anyhow::Result<()> {
@@ -135,8 +162,14 @@ impl Runtime {
                     let Some(func) = self.store.funcs.get(*idx as usize) else {
                         anyhow::bail!("not found func");
                     };
-                    match func {
-                        FuncInst::Internal(func) => self.push_frame(&func.clone()),
+                    let func_inst = func.clone();
+                    match func_inst {
+                        FuncInst::Internal(func) => self.push_frame(&func),
+                        FuncInst::External(func) => {
+                            if let Some(value) = self.invoke_external(func)? {
+                                self.stack.push(value);
+                            }
+                        }
                     }
                 }
             }
@@ -202,6 +235,35 @@ mod tests {
             let result = runtime.call("call_doubler", args)?;
             assert_eq!(result, Some(Value::I32(want)));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn call_imported_func() -> anyhow::Result<()> {
+        let wasm = wat::parse_file("fixtures/import.wat")?;
+        let mut runtime = Runtime::instantiate(wasm)?;
+        runtime.add_import("env", "add", |_, args| {
+            let arg = args[0];
+            Ok(Some(arg + arg))
+        })?;
+
+        let cases = vec![(2, 4), (10, 20), (1, 2)];
+
+        for (arg, want) in cases {
+            let args = vec![Value::I32(arg)];
+            let result = runtime.call("call_add", args)?;
+            assert_eq!(result, Some(Value::I32(want)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn call_imported_func_not_found() -> anyhow::Result<()> {
+        let wasm = wat::parse_file("fixtures/import.wat")?;
+        let mut runtime = Runtime::instantiate(wasm)?;
+        runtime.add_import("env", "foo", |_, _| Ok(None))?;
+        let result = runtime.call("call_add", vec![Value::I32(1)]);
+        assert!(result.is_err());
         Ok(())
     }
 }
