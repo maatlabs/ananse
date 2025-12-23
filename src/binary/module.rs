@@ -3,7 +3,7 @@ use nom::bytes::complete::{tag, take};
 use nom::multi::many0;
 use nom::number::complete::{le_u8, le_u32};
 use nom::sequence::pair;
-use nom_leb128::leb128_u32;
+use nom_leb128::{leb128_i32, leb128_u32};
 use num_traits::FromPrimitive as _;
 
 use super::{
@@ -202,6 +202,19 @@ fn decode_instructions(input: &[u8]) -> IResult<&[u8], Instruction> {
         Opcode::LocalGet => {
             let (rest, idx) = leb128_u32(input)?;
             (rest, Instruction::LocalGet(idx))
+        }
+        Opcode::LocalSet => {
+            let (rest, idx) = leb128_u32(input)?;
+            (rest, Instruction::LocalSet(idx))
+        }
+        Opcode::I32Store => {
+            let (rest, align) = leb128_u32(input)?;
+            let (rest, offset) = leb128_u32(rest)?;
+            (rest, Instruction::I32Store { align, offset })
+        }
+        Opcode::I32Const => {
+            let (rest, value) = leb128_i32(input)?;
+            (rest, Instruction::I32Const(value))
         }
         Opcode::I32Add => (input, Instruction::I32Add),
         Opcode::End => (input, Instruction::End),
@@ -451,6 +464,35 @@ mod tests {
                     code: vec![
                         Instruction::LocalGet(0),
                         Instruction::Call(0),
+                        Instruction::End
+                    ],
+                }]),
+                ..Default::default()
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_i32_store() -> anyhow::Result<()> {
+        let wasm = wat::parse_str("(module (func (i32.store offset=4 (i32.const 4))))")?;
+        let module = Module::new(&wasm)?;
+        assert_eq!(
+            module,
+            Module {
+                type_section: Some(vec![FuncType {
+                    params: vec![],
+                    results: vec![],
+                }]),
+                function_section: Some(vec![0]),
+                code_section: Some(vec![Function {
+                    locals: vec![],
+                    code: vec![
+                        Instruction::I32Const(4),
+                        Instruction::I32Store {
+                            align: 2,
+                            offset: 4
+                        },
                         Instruction::End
                     ],
                 }]),
