@@ -1,4 +1,6 @@
-use super::{ExternalFuncInst, FuncInst, Import, InternalFuncInst, Store, Value};
+use super::{
+    ExternalFuncInst, FuncInst, Import, InternalFuncInst, Store, Value, WasiSnapshotPreview1,
+};
 use crate::binary::instruction::Instruction;
 use crate::binary::module::Module;
 use crate::binary::types::{ExportDesc, ValueType};
@@ -18,6 +20,7 @@ pub struct Runtime {
     pub stack: Vec<Value>,
     pub call_stack: Vec<Frame>,
     pub import: Import,
+    pub wasi: Option<WasiSnapshotPreview1>,
 }
 
 impl Runtime {
@@ -26,6 +29,19 @@ impl Runtime {
         let store = Store::new(module)?;
         Ok(Self {
             store,
+            ..Default::default()
+        })
+    }
+
+    pub fn instantiate_with_wasi(
+        wasm: impl AsRef<[u8]>,
+        wasi: WasiSnapshotPreview1,
+    ) -> anyhow::Result<Self> {
+        let module = Module::new(wasm.as_ref())?;
+        let store = Store::new(module)?;
+        Ok(Self {
+            store,
+            wasi: Some(wasi),
             ..Default::default()
         })
     }
@@ -91,6 +107,13 @@ impl Runtime {
         let args = self
             .stack
             .split_off(self.stack.len() - func.func_type.params.len());
+
+        if func.module == "wasi_snapshot_preview1"
+            && let Some(wasi) = &mut self.wasi
+        {
+            return wasi.invoke(&mut self.store, &func.func, args);
+        }
+
         let module = self
             .import
             .get_mut(&func.module)
@@ -98,6 +121,7 @@ impl Runtime {
         let import_func = module
             .get_mut(&func.func)
             .ok_or(anyhow::anyhow!("not found function"))?;
+
         import_func(&mut self.store, args)
     }
 

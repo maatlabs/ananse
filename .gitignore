@@ -7,3 +7,5 @@
 
 # From Cargo
 target
+
+fixtures/hello_world.wasm
