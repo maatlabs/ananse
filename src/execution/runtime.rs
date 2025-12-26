@@ -157,6 +157,22 @@ impl Runtime {
                     };
                     frame.locals[*idx as usize] = value;
                 }
+                Instruction::I32Store { align: _, offset } => {
+                    let (Some(value), Some(addr)) = (self.stack.pop(), self.stack.pop()) else {
+                        anyhow::bail!("not found any value in the stack")
+                    };
+                    let addr = Into::<i32>::into(addr) as usize;
+                    let offset = (*offset) as usize;
+                    let at = addr + offset;
+                    let end = at + std::mem::size_of::<i32>();
+                    let memory = self
+                        .store
+                        .memories
+                        .get_mut(0)
+                        .ok_or(anyhow::anyhow!("not found memory"))?;
+                    let value: i32 = value.into();
+                    memory.data[at..end].copy_from_slice(&value.to_le_bytes());
+                }
                 Instruction::I32Const(value) => self.stack.push(Value::I32(*value)),
                 Instruction::I32Add => {
                     let (Some(right), Some(left)) = (self.stack.pop(), self.stack.pop()) else {
@@ -179,7 +195,6 @@ impl Runtime {
                         }
                     }
                 }
-                _ => todo!(),
             }
         }
 
@@ -290,6 +305,16 @@ mod tests {
         let mut runtime = Runtime::instantiate(wasm)?;
         let result = runtime.call("local_set", vec![])?;
         assert_eq!(result, Some(Value::I32(42)));
+        Ok(())
+    }
+
+    #[test]
+    fn i32_store() -> anyhow::Result<()> {
+        let wasm = wat::parse_file("fixtures/i32_store.wat")?;
+        let mut runtime = Runtime::instantiate(wasm)?;
+        runtime.call("i32_store", vec![])?;
+        let memory = &runtime.store.memories[0].data;
+        assert_eq!(memory[0], 42);
         Ok(())
     }
 }

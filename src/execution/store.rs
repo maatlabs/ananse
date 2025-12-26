@@ -4,6 +4,8 @@ use crate::binary::instruction::Instruction;
 use crate::binary::module::Module;
 use crate::binary::types::{ExportDesc, FuncType, ImportDesc, ValueType};
 
+pub const PAGE_SIZE: u32 = 65536; // 64KiB
+
 #[derive(Clone)]
 pub struct Func {
     pub locals: Vec<ValueType>,
@@ -39,9 +41,16 @@ pub struct ModuleInst {
     pub exports: HashMap<String, ExportInst>,
 }
 
+#[derive(Default, Debug, Clone)]
+pub struct MemoryInst {
+    pub data: Vec<u8>,
+    pub max: Option<u32>,
+}
+
 #[derive(Default)]
 pub struct Store {
     pub funcs: Vec<FuncInst>,
+    pub memories: Vec<MemoryInst>,
     pub module: ModuleInst,
 }
 
@@ -53,6 +62,7 @@ impl Store {
         };
 
         let mut funcs = vec![];
+        let mut memories = vec![];
 
         if let Some(ref import_section) = module.import_section {
             for import in import_section {
@@ -121,9 +131,54 @@ impl Store {
             }
         }
 
+        if let Some(ref sections) = module.memory_section {
+            for memory in sections {
+                let min = memory.limits.min * PAGE_SIZE;
+                let memory = MemoryInst {
+                    data: vec![0; min as usize],
+                    max: memory.limits.max,
+                };
+                memories.push(memory);
+            }
+        }
+
+        if let Some(ref sections) = module.data_section {
+            for data in sections {
+                let memory = memories
+                    .get_mut(data.memory_index as usize)
+                    .ok_or(anyhow::anyhow!("not found memory"))?;
+
+                let offset = data.offset as usize;
+                let init = &data.init;
+
+                if offset + init.len() > memory.data.len() {
+                    anyhow::bail!("data is too large to fit in memory");
+                }
+                memory.data[offset..offset + init.len()].copy_from_slice(init);
+            }
+        }
+
         Ok(Self {
             funcs,
+            memories,
             module: ModuleInst { exports },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn init_memory() -> anyhow::Result<()> {
+        let wasm = wat::parse_file("fixtures/memory.wat")?;
+        let module = Module::new(&wasm)?;
+        let store = Store::new(module)?;
+        assert_eq!(store.memories.len(), 1);
+        assert_eq!(store.memories[0].data.len(), 65536);
+        assert_eq!(&store.memories[0].data[0..5], b"hello");
+        assert_eq!(&store.memories[0].data[5..10], b"world");
+        Ok(())
     }
 }
