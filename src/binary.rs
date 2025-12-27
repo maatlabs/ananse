@@ -9,6 +9,6 @@ pub use module::Module;
 pub use opcode::Opcode;
 pub use section::{Function, SectionCode};
 pub use types::{
-    Data, Export, ExportDesc, FuncType, FunctionLocal, Import, ImportDesc, Limits, Memory,
-    ValueType,
+    Block, BlockType, Data, Export, ExportDesc, FuncType, FunctionLocal, Import, ImportDesc,
+    Limits, Memory, ValueType,
 };

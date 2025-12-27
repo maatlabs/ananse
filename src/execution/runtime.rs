@@ -1,5 +1,6 @@
 use super::{
-    ExternalFuncInst, FuncInst, Import, InternalFuncInst, Store, Value, WasiSnapshotPreview1,
+    ExternalFuncInst, FuncInst, Import, InternalFuncInst, Label, LabelKind, Store, Value,
+    WasiSnapshotPreview1,
 };
 use crate::binary::instruction::Instruction;
 use crate::binary::module::Module;
@@ -11,7 +12,8 @@ pub struct Frame {
     pub sp: usize,               // Stack pointer
     pub insts: Vec<Instruction>, // Instructions
     pub arity: usize,            // Number of return values
-    pub locals: Vec<Value>,      // Local variables
+    pub labels: Vec<Label>,
+    pub locals: Vec<Value>, // Local variables
 }
 
 #[derive(Default)]
@@ -143,6 +145,7 @@ impl Runtime {
             sp: self.stack.len(),
             insts: func.code.body.clone(),
             arity,
+            labels: vec![],
             locals,
         };
 
@@ -162,9 +165,43 @@ impl Runtime {
             };
 
             match inst {
-                Instruction::End => {
+                Instruction::If(block) => {
+                    let cond = self
+                        .stack
+                        .pop()
+                        .ok_or(anyhow::anyhow!("not found value in the stack"))?;
+
+                    let next_pc = get_end_address(&frame.insts, frame.pc as usize)?;
+                    if cond == Value::I32(0) {
+                        frame.pc = next_pc as isize;
+                    }
+
+                    let label = Label {
+                        kind: LabelKind::If,
+                        pc: next_pc,
+                        sp: self.stack.len(),
+                        arity: block.block_type.result_count(),
+                    };
+                    frame.labels.push(label);
+                }
+                Instruction::End => match frame.labels.pop() {
+                    Some(label) => {
+                        let Label { pc, sp, arity, .. } = label;
+                        frame.pc = pc as isize;
+                        stack_unwind(&mut self.stack, sp, arity)?;
+                    }
+                    None => {
+                        let frame = self
+                            .call_stack
+                            .pop()
+                            .ok_or(anyhow::anyhow!("not found value in the stack"))?;
+                        let Frame { sp, arity, .. } = frame;
+                        stack_unwind(&mut self.stack, sp, arity)?;
+                    }
+                },
+                Instruction::Return => {
                     let Some(frame) = self.call_stack.pop() else {
-                        anyhow::bail!("not found frame");
+                        anyhow::bail!("not found frame")
                     };
                     let Frame { sp, arity, .. } = frame;
                     stack_unwind(&mut self.stack, sp, arity)?;
@@ -200,10 +237,24 @@ impl Runtime {
                 Instruction::I32Const(value) => self.stack.push(Value::I32(*value)),
                 Instruction::I32Add => {
                     let (Some(right), Some(left)) = (self.stack.pop(), self.stack.pop()) else {
-                        anyhow::bail!("not found any value in the stack");
+                        anyhow::bail!("not found any value in the stack")
                     };
                     let result = left + right;
                     self.stack.push(result);
+                }
+                Instruction::I32Sub => {
+                    let (Some(right), Some(left)) = (self.stack.pop(), self.stack.pop()) else {
+                        anyhow::bail!("not found any value in the stack")
+                    };
+                    let result = left - right;
+                    self.stack.push(result);
+                }
+                Instruction::I32Lts => {
+                    let (Some(right), Some(left)) = (self.stack.pop(), self.stack.pop()) else {
+                        anyhow::bail!("not found any value in the stack")
+                    };
+                    let result = left < right;
+                    self.stack.push(result.into());
                 }
                 Instruction::Call(idx) => {
                     let Some(func) = self.store.funcs.get(*idx as usize) else {
@@ -242,6 +293,32 @@ pub fn stack_unwind(stack: &mut Vec<Value>, sp: usize, arity: usize) -> anyhow::
         stack.drain(sp..);
     }
     Ok(())
+}
+
+pub fn get_end_address(insts: &[Instruction], pc: usize) -> anyhow::Result<usize> {
+    let mut pc = pc;
+    let mut depth = 0;
+    loop {
+        pc += 1;
+        let inst = insts
+            .get(pc)
+            .ok_or(anyhow::anyhow!("not found instructions"))?;
+        match inst {
+            Instruction::If(_) => {
+                depth += 1;
+            }
+            Instruction::End => {
+                if depth == 0 {
+                    return Ok(pc);
+                } else {
+                    depth -= 1;
+                }
+            }
+            _ => {
+                // do nothing
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -339,6 +416,50 @@ mod tests {
         runtime.call("i32_store", vec![])?;
         let memory = &runtime.store.memories[0].data;
         assert_eq!(memory[0], 42);
+        Ok(())
+    }
+
+    #[test]
+    fn i32_sub() -> anyhow::Result<()> {
+        let wasm = wat::parse_file("fixtures/func_sub.wat")?;
+        let mut runtime = Runtime::instantiate(wasm)?;
+        let result = runtime.call("sub", vec![Value::I32(10), Value::I32(5)])?;
+        assert_eq!(result, Some(Value::I32(5)));
+        Ok(())
+    }
+
+    #[test]
+    fn i32_lts() -> anyhow::Result<()> {
+        let wasm = wat::parse_file("fixtures/func_lts.wat")?;
+        let mut runtime = Runtime::instantiate(wasm)?;
+        let result = runtime.call("lts", vec![Value::I32(10), Value::I32(5)])?;
+        assert_eq!(result, Some(Value::I32(0)));
+        Ok(())
+    }
+
+    #[test]
+    fn fib() -> anyhow::Result<()> {
+        let wasm = wat::parse_file("fixtures/fibonacci.wat")?;
+        let mut runtime = Runtime::instantiate(wasm)?;
+        let cases = vec![
+            (1, 1),
+            (2, 2),
+            (3, 3),
+            (4, 5),
+            (5, 8),
+            (6, 13),
+            (7, 21),
+            (8, 34),
+            (9, 55),
+            (10, 89),
+        ];
+
+        for (arg, want) in cases {
+            let args = vec![Value::I32(arg)];
+            let result = runtime.call("fib", args)?;
+            assert_eq!(result, Some(Value::I32(want)));
+        }
+
         Ok(())
     }
 }
