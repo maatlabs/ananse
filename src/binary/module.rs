@@ -68,9 +68,7 @@ impl Module {
                     let (rest, section_contents) = take(size)(input)?;
 
                     match code {
-                        SectionCode::Custom => {
-                            // TODO
-                        }
+                        SectionCode::Custom => {}
                         SectionCode::Memory => {
                             let (_, memory) = decode_memory_section(section_contents)?;
                             module.memory_section = Some(vec![memory]);

@@ -325,9 +325,7 @@ pub fn get_end_address(insts: &[Instruction], pc: usize) -> anyhow::Result<usize
                     depth -= 1;
                 }
             }
-            _ => {
-                // do nothing
-            }
+            _ => {}
         }
     }
 }

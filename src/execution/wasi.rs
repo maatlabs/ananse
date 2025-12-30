@@ -34,11 +34,7 @@ impl WasiSnapshotPreview1 {
         }
     }
 
-    pub fn fd_write(
-        &mut self,
-        store: &mut Store,
-        args: Vec<Value>,
-    ) -> anyhow::Result<Option<Value>> {
+    fn fd_write(&mut self, store: &mut Store, args: Vec<Value>) -> anyhow::Result<Option<Value>> {
         let args: Vec<i32> = args
             .into_iter()
             .map(|v| v.try_into().map_err(|_| anyhow::anyhow!("type mismatch")))

@@ -6,13 +6,13 @@ use crate::binary::types::{ExportDesc, FuncType, ImportDesc, ValueType};
 
 pub const PAGE_SIZE: u32 = 65536; // 64KiB
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Func {
     pub locals: Vec<ValueType>,
     pub body: Vec<Instruction>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct InternalFuncInst {
     pub func_type: FuncType,
     pub code: Func,
@@ -25,29 +25,30 @@ pub struct ExternalFuncInst {
     pub func_type: FuncType,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum FuncInst {
     Internal(InternalFuncInst),
     External(ExternalFuncInst),
 }
 
+#[derive(Debug)]
 pub struct ExportInst {
     pub name: String,
     pub desc: ExportDesc,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ModuleInst {
     pub exports: HashMap<String, ExportInst>,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct MemoryInst {
     pub data: Vec<u8>,
     pub max: Option<u32>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Store {
     pub funcs: Vec<FuncInst>,
     pub memories: Vec<MemoryInst>,
