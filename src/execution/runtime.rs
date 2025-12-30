@@ -6,26 +6,44 @@ use crate::binary::instruction::Instruction;
 use crate::binary::module::Module;
 use crate::binary::types::{ExportDesc, ValueType};
 
+/// A call frame representing a function invocation.
 #[derive(Default)]
 pub struct Frame {
-    pub pc: isize,               // Program counter
-    pub sp: usize,               // Stack pointer
-    pub insts: Vec<Instruction>, // Instructions
-    pub arity: usize,            // Number of return values
+    /// Program counter (current instruction index).
+    pub pc: isize,
+    /// Stack pointer at frame entry.
+    pub sp: usize,
+    /// The function's instructions.
+    pub insts: Vec<Instruction>,
+    /// Number of return values expected.
+    pub arity: usize,
+    /// Active control flow labels.
     pub labels: Vec<Label>,
-    pub locals: Vec<Value>, // Local variables
+    /// Local variables including parameters.
+    pub locals: Vec<Value>,
 }
 
+/// The WebAssembly runtime executor.
 #[derive(Default)]
 pub struct Runtime {
+    /// The module store with functions and memory.
     pub store: Store,
+    /// The operand stack.
     pub stack: Vec<Value>,
+    /// The call stack of active frames.
     pub call_stack: Vec<Frame>,
+    /// Registered import functions.
     pub import: Import,
+    /// Optional WASI interface.
     pub wasi: Option<WasiSnapshotPreview1>,
 }
 
 impl Runtime {
+    /// Creates a runtime from a WebAssembly binary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the binary cannot be parsed or instantiated.
     pub fn instantiate(wasm: impl AsRef<[u8]>) -> anyhow::Result<Self> {
         let module = Module::new(wasm.as_ref())?;
         let store = Store::new(module)?;
@@ -35,6 +53,11 @@ impl Runtime {
         })
     }
 
+    /// Creates a runtime with WASI support from a WebAssembly binary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the binary cannot be parsed or instantiated.
     pub fn instantiate_with_wasi(
         wasm: impl AsRef<[u8]>,
         wasi: WasiSnapshotPreview1,
@@ -48,6 +71,11 @@ impl Runtime {
         })
     }
 
+    /// Registers an import function.
+    ///
+    /// # Errors
+    ///
+    /// Currently always succeeds.
     pub fn add_import(
         &mut self,
         module_name: impl Into<String>,
@@ -59,6 +87,11 @@ impl Runtime {
         Ok(())
     }
 
+    /// Calls an exported function by name with the given arguments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the function is not found or execution fails.
     pub fn call(
         &mut self,
         name: impl Into<String>,

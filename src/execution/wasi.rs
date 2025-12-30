@@ -4,24 +4,32 @@ use std::os::fd::FromRawFd;
 
 use super::{Store, Value};
 
+/// WASI snapshot preview1 implementation.
 #[derive(Default)]
 pub struct WasiSnapshotPreview1 {
+    /// Open file descriptors.
     pub file_table: Vec<Box<File>>,
 }
 
 impl WasiSnapshotPreview1 {
+    /// Creates a new WASI instance with stdin, stdout, and stderr.
     pub fn new() -> Self {
         unsafe {
             Self {
                 file_table: vec![
-                    Box::new(File::from_raw_fd(0)), // stdin
-                    Box::new(File::from_raw_fd(1)), // stdout
-                    Box::new(File::from_raw_fd(2)), // stderr
+                    Box::new(File::from_raw_fd(0)),
+                    Box::new(File::from_raw_fd(1)),
+                    Box::new(File::from_raw_fd(2)),
                 ],
             }
         }
     }
 
+    /// Invokes a WASI function by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the function is not supported or execution fails.
     pub fn invoke(
         &mut self,
         store: &mut Store,

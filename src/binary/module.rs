@@ -14,16 +14,26 @@ use super::{
 const WASM_BINARY_MAGIC: &str = "\0asm";
 const WASM_BINARY_VERSION: u32 = 1;
 
+/// A parsed WebAssembly module.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Module {
+    /// The magic number identifying this as a WASM binary.
     pub magic: String,
+    /// The binary format version.
     pub version: u32,
+    /// Memory declarations.
     pub memory_section: Option<Vec<Memory>>,
+    /// Data segments for memory initialization.
     pub data_section: Option<Vec<Data>>,
+    /// Function type signatures.
     pub type_section: Option<Vec<FuncType>>,
+    /// Function-to-type index mappings.
     pub function_section: Option<Vec<u32>>,
+    /// Function bodies.
     pub code_section: Option<Vec<Function>>,
+    /// Exported functions and memories.
     pub export_section: Option<Vec<Export>>,
+    /// Imported functions and memories.
     pub import_section: Option<Vec<Import>>,
 }
 
@@ -44,6 +54,11 @@ impl Default for Module {
 }
 
 impl Module {
+    /// Parses a WebAssembly binary into a Module.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the binary is malformed or contains unsupported sections.
     pub fn new(input: &[u8]) -> anyhow::Result<Self> {
         let (_, module) =
             Self::decode(input).map_err(|e| anyhow::anyhow!("failed to parse wasm: {e}"))?;

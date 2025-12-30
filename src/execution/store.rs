@@ -4,58 +4,89 @@ use crate::binary::instruction::Instruction;
 use crate::binary::module::Module;
 use crate::binary::types::{ExportDesc, FuncType, ImportDesc, ValueType};
 
-pub const PAGE_SIZE: u32 = 65536; // 64KiB
+/// Size of a WebAssembly memory page in bytes (64 KiB).
+pub const PAGE_SIZE: u32 = 65536;
 
+/// A function's code representation at runtime.
 #[derive(Debug, Clone)]
 pub struct Func {
+    /// Local variable types.
     pub locals: Vec<ValueType>,
+    /// The instruction sequence.
     pub body: Vec<Instruction>,
 }
 
+/// An internal (WASM-defined) function instance.
 #[derive(Debug, Clone)]
 pub struct InternalFuncInst {
+    /// The function's type signature.
     pub func_type: FuncType,
+    /// The function's code.
     pub code: Func,
 }
 
+/// An external (imported) function instance.
 #[derive(Debug, Clone)]
 pub struct ExternalFuncInst {
+    /// The module name this function is imported from.
     pub module: String,
+    /// The function name within the module.
     pub func: String,
+    /// The function's type signature.
     pub func_type: FuncType,
 }
 
+/// A function instance, either internal or external.
 #[derive(Debug, Clone)]
 pub enum FuncInst {
+    /// A function defined in the WASM module.
     Internal(InternalFuncInst),
+    /// A function imported from the host.
     External(ExternalFuncInst),
 }
 
+/// An instantiated export.
 #[derive(Debug)]
 pub struct ExportInst {
+    /// The export name.
     pub name: String,
+    /// The exported entity descriptor.
     pub desc: ExportDesc,
 }
 
+/// An instantiated module with its exports.
 #[derive(Debug, Default)]
 pub struct ModuleInst {
+    /// Map of export names to export instances.
     pub exports: HashMap<String, ExportInst>,
 }
 
+/// A linear memory instance.
 #[derive(Debug, Default, Clone)]
 pub struct MemoryInst {
+    /// The memory contents.
     pub data: Vec<u8>,
+    /// Optional maximum size in pages.
     pub max: Option<u32>,
 }
 
+/// The runtime store containing all instantiated module data.
 #[derive(Debug, Default)]
 pub struct Store {
+    /// All function instances.
     pub funcs: Vec<FuncInst>,
+    /// All memory instances.
     pub memories: Vec<MemoryInst>,
+    /// The module instance with exports.
     pub module: ModuleInst,
 }
 
 impl Store {
+    /// Creates a new store from a parsed module.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the module references missing types or memories.
     pub fn new(module: Module) -> anyhow::Result<Self> {
         let func_type_idxs = match module.function_section {
             Some(ref idxs) => idxs.clone(),

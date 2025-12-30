@@ -1,10 +1,14 @@
+/// A runtime value on the WebAssembly stack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Value {
+    /// 32-bit integer value.
     I32(i32),
+    /// 64-bit integer value.
     I64(i64),
 }
 
 impl Value {
+    /// Adds two values, returning `None` if types do not match.
     pub fn checked_add(self, rhs: Self) -> Option<Self> {
         match (self, rhs) {
             (Self::I32(left), Self::I32(right)) => Some(Self::I32(left.wrapping_add(right))),
@@ -13,6 +17,7 @@ impl Value {
         }
     }
 
+    /// Subtracts two values, returning `None` if types do not match.
     pub fn checked_sub(self, rhs: Self) -> Option<Self> {
         match (self, rhs) {
             (Self::I32(left), Self::I32(right)) => Some(Self::I32(left.wrapping_sub(right))),
@@ -22,16 +27,23 @@ impl Value {
     }
 }
 
+/// A control flow label for structured control.
 #[derive(Debug, Clone)]
 pub struct Label {
+    /// The kind of control structure.
     pub kind: LabelKind,
+    /// Program counter to jump to on branch.
     pub pc: usize,
+    /// Stack pointer at label entry.
     pub sp: usize,
+    /// Number of result values.
     pub arity: usize,
 }
 
+/// The kind of control flow label.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LabelKind {
+    /// Label for an if block.
     If,
 }
 
