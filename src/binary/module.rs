@@ -106,7 +106,7 @@ impl Module {
                 Err(e) => return Err(e),
             }
         }
-        Ok((input, module))
+        Ok((remaining, module))
     }
 }
 
@@ -306,11 +306,12 @@ fn decode_memory_section(input: &[u8]) -> IResult<&[u8], Memory> {
 }
 
 fn decode_limits(input: &[u8]) -> IResult<&[u8], Limits> {
-    let (input, (flags, min)) = pair(leb128_u32, leb128_u32)(input)?;
+    let (mut input, (flags, min)) = pair(leb128_u32, leb128_u32)(input)?;
     let max = if flags == 0 {
         None
     } else {
-        let (_, max) = leb128_u32(input)?;
+        let (rest, max) = leb128_u32(input)?;
+        input = rest;
         Some(max)
     };
 
