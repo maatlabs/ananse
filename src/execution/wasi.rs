@@ -30,7 +30,7 @@ impl WasiSnapshotPreview1 {
     ) -> anyhow::Result<Option<Value>> {
         match func {
             "fd_write" => self.fd_write(store, args),
-            _ => unimplemented!("{}", func),
+            _ => anyhow::bail!("unsupported WASI function: {func}"),
         }
     }
 
@@ -39,7 +39,10 @@ impl WasiSnapshotPreview1 {
         store: &mut Store,
         args: Vec<Value>,
     ) -> anyhow::Result<Option<Value>> {
-        let args = args.into_iter().map(Into::into).collect::<Vec<i32>>();
+        let args: Vec<i32> = args
+            .into_iter()
+            .map(|v| v.try_into().map_err(|_| anyhow::anyhow!("type mismatch")))
+            .collect::<anyhow::Result<Vec<i32>>>()?;
 
         let fd = args[0];
         let mut iovs = args[1] as usize;

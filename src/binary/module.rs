@@ -112,18 +112,18 @@ impl Module {
 
 fn decode_section_header(input: &[u8]) -> IResult<&[u8], (SectionCode, u32)> {
     let (input, (code, size)) = pair(le_u8, leb128_u32)(input)?;
-    Ok((
-        input,
-        (
-            SectionCode::from_u8(code).expect("unexpected section code"),
-            size,
-        ),
-    ))
+    let section_code = SectionCode::from_u8(code).ok_or_else(|| {
+        nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag))
+    })?;
+    Ok((input, (section_code, size)))
 }
 
 fn decode_value_type(input: &[u8]) -> IResult<&[u8], ValueType> {
     let (input, value_type) = le_u8(input)?;
-    Ok((input, value_type.into()))
+    let value_type = value_type.try_into().map_err(|_| {
+        nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag))
+    })?;
+    Ok((input, value_type))
 }
 
 fn decode_type_section(input: &[u8]) -> IResult<&[u8], Vec<FuncType>> {
@@ -188,9 +188,12 @@ fn decode_function_body(input: &[u8]) -> IResult<&[u8], Function> {
     for _ in 0..local_decl_count {
         let (rest, type_count) = leb128_u32(input)?;
         let (rest, value_type) = le_u8(rest)?;
+        let value_type = value_type.try_into().map_err(|_| {
+            nom::Err::Failure(nom::error::Error::new(rest, nom::error::ErrorKind::Tag))
+        })?;
         body.locals.push(super::FunctionLocal {
             type_count,
-            value_type: value_type.into(),
+            value_type,
         });
         input = rest;
     }
@@ -208,7 +211,9 @@ fn decode_function_body(input: &[u8]) -> IResult<&[u8], Function> {
 
 fn decode_instructions(input: &[u8]) -> IResult<&[u8], Instruction> {
     let (input, byte) = le_u8(input)?;
-    let op = Opcode::from_u8(byte).unwrap_or_else(|| panic!("invalid opcode: {byte:X}"));
+    let op = Opcode::from_u8(byte).ok_or_else(|| {
+        nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag))
+    })?;
     let (rest, inst) = match op {
         Opcode::If => {
             let (rest, block) = decode_block(input)?;
@@ -254,7 +259,12 @@ fn decode_export_section(input: &[u8]) -> IResult<&[u8], Vec<Export>> {
         let (rest, idx) = leb128_u32(rest)?;
         let desc = match export_kind {
             0x00 => ExportDesc::Func(idx),
-            _ => unimplemented!("unsupported export kind: {:X}", export_kind),
+            _ => {
+                return Err(nom::Err::Failure(nom::error::Error::new(
+                    rest,
+                    nom::error::ErrorKind::Tag,
+                )));
+            }
         };
         exports.push(Export { name, desc });
         input = rest;
@@ -276,7 +286,12 @@ fn decode_import_section(input: &[u8]) -> IResult<&[u8], Vec<Import>> {
                 let (rest, idx) = leb128_u32(rest)?;
                 (rest, ImportDesc::Func(idx))
             }
-            _ => unimplemented!("unsupported import kind: {:X}", import_kind),
+            _ => {
+                return Err(nom::Err::Failure(nom::error::Error::new(
+                    rest,
+                    nom::error::ErrorKind::Tag,
+                )));
+            }
         };
         imports.push(Import {
             module,
@@ -293,10 +308,10 @@ fn decode_import_section(input: &[u8]) -> IResult<&[u8], Vec<Import>> {
 fn decode_name(input: &[u8]) -> IResult<&[u8], String> {
     let (input, size) = leb128_u32(input)?;
     let (input, name) = take(size)(input)?;
-    Ok((
-        input,
-        String::from_utf8(name.to_vec()).expect("invalid utf-8 string"),
-    ))
+    let name = String::from_utf8(name.to_vec()).map_err(|_| {
+        nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
+    })?;
+    Ok((input, name))
 }
 
 fn decode_memory_section(input: &[u8]) -> IResult<&[u8], Memory> {
@@ -349,7 +364,10 @@ fn decode_block(input: &[u8]) -> IResult<&[u8], Block> {
     let block_type = if byte == 0x40 {
         BlockType::Void
     } else {
-        BlockType::Value(vec![byte.into()])
+        let value_type = byte.try_into().map_err(|_| {
+            nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag))
+        })?;
+        BlockType::Value(vec![value_type])
     };
 
     Ok((input, Block { block_type }))

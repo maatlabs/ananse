@@ -222,16 +222,20 @@ impl Runtime {
                     let (Some(value), Some(addr)) = (self.stack.pop(), self.stack.pop()) else {
                         anyhow::bail!("not found any value in the stack")
                     };
-                    let addr = Into::<i32>::into(addr) as usize;
+                    let addr: i32 = addr
+                        .try_into()
+                        .map_err(|_| anyhow::anyhow!("type mismatch"))?;
                     let offset = (*offset) as usize;
-                    let at = addr + offset;
+                    let at = addr as usize + offset;
                     let end = at + std::mem::size_of::<i32>();
                     let memory = self
                         .store
                         .memories
                         .get_mut(0)
                         .ok_or(anyhow::anyhow!("not found memory"))?;
-                    let value: i32 = value.into();
+                    let value: i32 = value
+                        .try_into()
+                        .map_err(|_| anyhow::anyhow!("type mismatch"))?;
                     memory.data[at..end].copy_from_slice(&value.to_le_bytes());
                 }
                 Instruction::I32Const(value) => self.stack.push(Value::I32(*value)),
@@ -239,21 +243,28 @@ impl Runtime {
                     let (Some(right), Some(left)) = (self.stack.pop(), self.stack.pop()) else {
                         anyhow::bail!("not found any value in the stack")
                     };
-                    let result = left + right;
+                    let result = left
+                        .checked_add(right)
+                        .ok_or(anyhow::anyhow!("type mismatch"))?;
                     self.stack.push(result);
                 }
                 Instruction::I32Sub => {
                     let (Some(right), Some(left)) = (self.stack.pop(), self.stack.pop()) else {
                         anyhow::bail!("not found any value in the stack")
                     };
-                    let result = left - right;
+                    let result = left
+                        .checked_sub(right)
+                        .ok_or(anyhow::anyhow!("type mismatch"))?;
                     self.stack.push(result);
                 }
                 Instruction::I32Lts => {
                     let (Some(right), Some(left)) = (self.stack.pop(), self.stack.pop()) else {
                         anyhow::bail!("not found any value in the stack")
                     };
-                    let result = left < right;
+                    let result = left
+                        .partial_cmp(&right)
+                        .ok_or(anyhow::anyhow!("type mismatch"))?
+                        .is_lt();
                     self.stack.push(result.into());
                 }
                 Instruction::Call(idx) => {

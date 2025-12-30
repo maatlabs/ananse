@@ -4,6 +4,24 @@ pub enum Value {
     I64(i64),
 }
 
+impl Value {
+    pub fn checked_add(self, rhs: Self) -> Option<Self> {
+        match (self, rhs) {
+            (Self::I32(left), Self::I32(right)) => Some(Self::I32(left.wrapping_add(right))),
+            (Self::I64(left), Self::I64(right)) => Some(Self::I64(left.wrapping_add(right))),
+            _ => None,
+        }
+    }
+
+    pub fn checked_sub(self, rhs: Self) -> Option<Self> {
+        match (self, rhs) {
+            (Self::I32(left), Self::I32(right)) => Some(Self::I32(left.wrapping_sub(right))),
+            (Self::I64(left), Self::I64(right)) => Some(Self::I64(left.wrapping_sub(right))),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Label {
     pub kind: LabelKind,
@@ -23,11 +41,13 @@ impl From<i32> for Value {
     }
 }
 
-impl From<Value> for i32 {
-    fn from(value: Value) -> Self {
+impl TryFrom<Value> for i32 {
+    type Error = Value;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
-            Value::I32(v) => v,
-            _ => panic!("type mismatch"),
+            Value::I32(v) => Ok(v),
+            _ => Err(value),
         }
     }
 }
@@ -47,22 +67,16 @@ impl From<bool> for Value {
 impl core::ops::Add for Value {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (Self::I32(left), Self::I32(right)) => Self::I32(left + right),
-            (Self::I64(left), Self::I64(right)) => Self::I64(left + right),
-            _ => panic!("type mismatch"),
-        }
+        self.checked_add(rhs)
+            .expect("type mismatch in Value addition")
     }
 }
 
 impl core::ops::Sub for Value {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (Self::I32(left), Self::I32(right)) => Self::I32(left - right),
-            (Self::I64(left), Self::I64(right)) => Self::I64(left - right),
-            _ => panic!("type mismatch"),
-        }
+        self.checked_sub(rhs)
+            .expect("type mismatch in Value subtraction")
     }
 }
 
@@ -71,7 +85,7 @@ impl PartialOrd for Value {
         match (self, other) {
             (Self::I32(a), Self::I32(b)) => a.partial_cmp(b),
             (Self::I64(a), Self::I64(b)) => a.partial_cmp(b),
-            _ => panic!("type mismatch"),
+            _ => None,
         }
     }
 }

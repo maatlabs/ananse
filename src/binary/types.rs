@@ -10,12 +10,14 @@ pub enum ValueType {
     I64, // 0x7E
 }
 
-impl From<u8> for ValueType {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for ValueType {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0x7F => Self::I32,
-            0x7E => Self::I64,
-            _ => panic!("invalid value type: {value:X}"),
+            0x7F => Ok(Self::I32),
+            0x7E => Ok(Self::I64),
+            _ => Err(value),
         }
     }
 }
