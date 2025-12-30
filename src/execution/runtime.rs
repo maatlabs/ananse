@@ -321,8 +321,8 @@ impl Runtime {
     }
 
     fn cleanup(&mut self) {
-        self.stack = vec![];
-        self.call_stack = vec![];
+        self.stack.clear();
+        self.call_stack.clear();
     }
 }
 

@@ -88,10 +88,7 @@ impl Store {
     ///
     /// Returns an error if the module references missing types or memories.
     pub fn new(module: Module) -> anyhow::Result<Self> {
-        let func_type_idxs = match module.function_section {
-            Some(ref idxs) => idxs.clone(),
-            _ => vec![],
-        };
+        let func_type_idxs = module.function_section.clone().unwrap_or_default();
 
         let mut funcs = vec![];
         let mut memories = vec![];
