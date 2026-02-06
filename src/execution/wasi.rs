@@ -1,6 +1,9 @@
 use std::fs::File;
 use std::io::prelude::*;
+#[cfg(unix)]
 use std::os::fd::FromRawFd;
+#[cfg(windows)]
+use std::os::windows::io::FromRawHandle;
 
 use super::{Store, Value};
 
@@ -14,12 +17,33 @@ pub struct WasiSnapshotPreview1 {
 impl WasiSnapshotPreview1 {
     /// Creates a new WASI instance with stdin, stdout, and stderr.
     pub fn new() -> Self {
+        #[cfg(unix)]
         unsafe {
             Self {
                 file_table: vec![
                     Box::new(File::from_raw_fd(0)),
                     Box::new(File::from_raw_fd(1)),
                     Box::new(File::from_raw_fd(2)),
+                ],
+            }
+        }
+
+        #[cfg(windows)]
+        unsafe {
+            use std::os::windows::io::RawHandle;
+            const STD_INPUT_HANDLE: u32 = 0xFFFFFFF6_u32;
+            const STD_OUTPUT_HANDLE: u32 = 0xFFFFFFF5_u32;
+            const STD_ERROR_HANDLE: u32 = 0xFFFFFFF4_u32;
+
+            extern "system" {
+                fn GetStdHandle(nStdHandle: u32) -> RawHandle;
+            }
+
+            Self {
+                file_table: vec![
+                    Box::new(File::from_raw_handle(GetStdHandle(STD_INPUT_HANDLE))),
+                    Box::new(File::from_raw_handle(GetStdHandle(STD_OUTPUT_HANDLE))),
+                    Box::new(File::from_raw_handle(GetStdHandle(STD_ERROR_HANDLE))),
                 ],
             }
         }
