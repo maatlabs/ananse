@@ -35,7 +35,7 @@ impl WasiSnapshotPreview1 {
             const STD_OUTPUT_HANDLE: u32 = 0xFFFFFFF5_u32;
             const STD_ERROR_HANDLE: u32 = 0xFFFFFFF4_u32;
 
-            extern "system" {
+            unsafe extern "system" {
                 fn GetStdHandle(nStdHandle: u32) -> RawHandle;
             }
 
