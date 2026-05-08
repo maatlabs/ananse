@@ -121,7 +121,7 @@ impl Store {
         }
 
         if let Some(ref code_section) = module.code_section {
-            for (func_body, type_idx) in code_section.iter().zip(func_type_idxs.into_iter()) {
+            for (func_body, type_idx) in code_section.iter().zip(func_type_idxs) {
                 let Some(ref func_types) = module.type_section else {
                     anyhow::bail!("not found type_section")
                 };

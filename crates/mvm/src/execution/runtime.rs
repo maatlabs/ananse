@@ -186,11 +186,7 @@ impl Runtime {
     }
 
     fn execute(&mut self) -> anyhow::Result<()> {
-        loop {
-            let Some(frame) = self.call_stack.last_mut() else {
-                break;
-            };
-
+        while let Some(frame) = self.call_stack.last_mut() {
             frame.pc += 1;
 
             let Some(inst) = frame.insts.get(frame.pc as usize) else {

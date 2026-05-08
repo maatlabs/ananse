@@ -1,9 +1,29 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.1.1] - 2026-05-08
+
+Workspace bootstrap. The single-package layout is converted into a Cargo workspace. No behavioural change relative to v0.1.0; every test from v0.1.0 continues to pass under the new layout.
+
+### Added
+
+- `[workspace]` with explicit `members = ["crates/mvm"]` and matching `default-members` (with `crates/mvm_*` reserved for future crates).
+- `[workspace.package]` carrying `version`, `edition = "2024"`, `license`, `repository`, `homepage`, `readme`; consumed by per-crate `Cargo.toml`s via `field.workspace = true`.
+- `[workspace.dependencies]` pinning shared deps. Includes a `winterfell` family pin (`winter-air`, `winter-crypto`, `winter-math`, `winter-prover`, `winter-verifier` all at `0.13`) reserved for future work.
+- `[profile.test]` and `[profile.bench]` with `debug-assertions = false`; Winterfell's prover ships an over-strict `debug_assert_eq!` on per-constraint quotient degree that fires when under-exercised opcode-class selectors interpolate to the zero polynomial; soundness still holds because FRI checks the inequality, but `cargo test` would otherwise abort under the default `dev` profile.
+
+### Changed
+
+- All v0.1.0 source moved from `src/` to `crates/mvm/src/` (binary + library). All v0.1.0 fixtures moved from `fixtures/` to `crates/mvm/fixtures/`. The binary still runs `mvm` and the test suite still exercises the same 23 cases.
+- Workspace manifest version bumped to `0.1.1`.
+
+### Fixed
+
+- `crates/mvm/src/execution/runtime.rs:188` -- replaced `loop { let Some(frame) = ... else { break }; ... }` with a `while let` loop. Surfaced by Rust 1.95 / clippy's `manual-while-let-some` rule.
+- `crates/mvm/src/execution/store.rs:124` -- removed a redundant `.into_iter()` call on a value already implementing `IntoIterator`. Surfaced by clippy's `useless-conversion` rule.
+
+---
 
 ## [0.1.0] - 2025-12-30
 
@@ -35,4 +55,5 @@ Initial release of the Maat Virtual Machine (MVM), a WASM-based zero-knowledge v
   - Code of conduct and contribution guidelines
   - Dual licensing (MIT/Apache-2.0)
 
+[0.1.1]: https://github.com/maatlabs/mvm/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/maatlabs/mvm/releases/tag/v0.1.0

@@ -1,0 +1,26 @@
+[package]
+name = "mvm"
+description = "Maat Virtual Machine: WASM-based zero-knowledge virtual machine (zkVM)"
+keywords = ["wasm", "zero-knowledge", "zk", "zkvm", "stark"]
+categories = ["compilers", "cryptography", "wasm"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+
+[[bin]]
+name = "mvm"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+nom.workspace = true
+nom-leb128.workspace = true
+num-derive.workspace = true
+num-traits.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+wat.workspace = true

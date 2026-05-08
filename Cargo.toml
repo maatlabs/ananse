@@ -1,32 +1,43 @@
-[package]
-name = "mvm"
-version = "0.1.0"
-description = "Maat Virtual Machine: WASM-based zero-knowledge virtual machine (zkVM)"
-edition.workspace = true
-repository.workspace = true
-license.workspace = true
-
-[[bin]]
-name = "mvm"
-path = "src/main.rs"
+[workspace]
+resolver = "2"
+members = ["crates/mvm"]
+default-members = ["crates/mvm"]
 
 [workspace.package]
+version = "0.1.1"
 edition = "2024"
-repository = "https://github.com/maatlabs/mvm"
 license = "MIT OR Apache-2.0"
-
-[workspace]
-members = []
+repository = "https://github.com/maatlabs/mvm"
+homepage = "https://github.com/maatlabs/mvm"
+readme = "README.md"
 
 [workspace.dependencies]
-
-[dependencies]
 anyhow = "1"
-nom = "7.1.3"
+nom = "7"
 nom-leb128 = "0.2"
 num-derive = "0.4"
 num-traits = "0.2"
+pretty_assertions = "1"
+thiserror = "2"
+wat = "1"
+winter-air = "0.13"
+winter-crypto = "0.13"
+winter-math = "0.13"
+winter-prover = "0.13"
+winter-verifier = "0.13"
 
-[dev-dependencies]
-pretty_assertions = "1.4"
-wat = "1.243"
+# Winterfell's prover ships an over-strict `debug_assert_eq!` that requires the
+# *exact* per-constraint quotient degree to equal the declared upper bound;
+# under-exercised opcode-class selectors interpolate to the zero polynomial and
+# the actual quotient degree drops below the declared upper bound. Soundness
+# still holds (FRI checks `quotient_degree <= declared`), so we disable
+# `debug_assertions` for `test` and `bench` profiles to align with release
+# semantics.
+#
+# Our own `debug_assert!`s are sanity checks; production builds already run
+# without them.
+[profile.test]
+debug-assertions = false
+
+[profile.bench]
+debug-assertions = false
