@@ -9,7 +9,6 @@
 
 [![CI](https://github.com/maatlabs/mvm/workflows/CI/badge.svg)](https://github.com/maatlabs/mvm/actions)
 [![License](https://img.shields.io/crates/l/mvm.svg)](https://github.com/maatlabs/mvm#license)
-[![Crates.io](https://img.shields.io/crates/v/mvm.svg)](https://crates.io/crates/mvm)
 [![Releases](https://img.shields.io/github/v/release/maatlabs/mvm)](https://github.com/maatlabs/mvm/releases)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg?style=flat-square)](https://github.com/maatlabs/mvm/blob/main/CONTRIBUTING.md)
 
