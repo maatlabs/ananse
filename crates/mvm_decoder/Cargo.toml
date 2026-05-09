@@ -1,0 +1,20 @@
+[package]
+name = "mvm_decoder"
+description = "WASM module decoder for the Maat zkVM"
+keywords = ["wasm", "zero-knowledge", "zk", "zkvm", "decoder"]
+categories = ["compilers", "cryptography", "wasm"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+
+[features]
+default = ["std"]
+std = ["thiserror/std", "wasmparser/std"]
+alloc = []
+
+[dependencies]
+thiserror = { workspace = true }
+wasmparser = { workspace = true }
