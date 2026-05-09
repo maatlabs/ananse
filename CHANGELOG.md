@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+The open dev cycle for v0.2.0, the foundational ZK release.
+
+### Added
+
+- **`mvm_decoder` crate.** WASM frontend that produces a validated `Module` value (validated bytes + extracted import / export metadata) for downstream consumers. Backed by `wasmparser 0.248`. Two-pass design: pass 1 drives `wasmparser::Validator` under a restricted `WasmFeatures` profile (only `FLOATS` + `MUTABLE_GLOBAL` enabled, so SIMD, threads, GC, multi-memory, reference types, tail calls, exceptions are rejected at validation); pass 2 walks the same bytes to surface domain-specific rejections. Public surface: `Module`, `ImportEntry`, `ExportEntry`, `ExportKind`, `WASI_MODULE`, and `DecodeError` with five span-bearing variants (`InvalidBinary`, `ValidationFailed`, `FloatsDisabled`, `ForbiddenImportModule`, `ForbiddenWasiImport`). Crate compiles with `--no-default-features --features alloc` so a future `no_std` verifier path is not foreclosed.
+
+### Changed
+
+- **Test layout restructured.** Integration tests moved out of per-crate `tests/` directories into a top-level `tests/` workspace member (`mvm_tests`, `publish = false`) sitting at the same level as `crates/`, with shared fixture-loading helpers in `tests/src/lib.rs`. `fixtures/` moved up to be a sibling of `crates/`, becoming the single fixture pool for the workspace.
+
+---
+
 ## [0.1.1] - 2026-05-08
 
 Workspace bootstrap. The single-package layout is converted into a Cargo workspace. No behavioural change relative to v0.1.0; every test from v0.1.0 continues to pass under the new layout.

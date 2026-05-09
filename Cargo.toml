@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/mvm"]
+members = ["crates/mvm", "crates/mvm_decoder", "tests"]
 default-members = ["crates/mvm"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/maatlabs/mvm"
@@ -13,13 +13,18 @@ readme = "README.md"
 
 [workspace.dependencies]
 anyhow = "1"
+mvm_decoder = { path = "crates/mvm_decoder" }
 nom = "7"
 nom-leb128 = "0.2"
 num-derive = "0.4"
 num-traits = "0.2"
 pretty_assertions = "1"
-thiserror = "2"
-wat = "1"
+thiserror = { version = "2", default-features = false }
+wasmparser = { version = "0.248", default-features = false, features = [
+    "validate",
+    "features",
+] }
+wat = "1.248"
 winter-air = "0.13"
 winter-crypto = "0.13"
 winter-math = "0.13"

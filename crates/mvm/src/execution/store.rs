@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn init_memory() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/memory.wat")?;
+        let wasm = wat::parse_file("../../fixtures/memory.wat")?;
         let module = Module::new(&wasm)?;
         let store = Store::new(module)?;
         assert_eq!(store.memories.len(), 1);
