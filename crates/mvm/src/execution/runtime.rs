@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn execute_i32_add() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/func_add.wat")?;
+        let wasm = wat::parse_file("../../fixtures/func_add.wat")?;
         let mut runtime = Runtime::instantiate(wasm)?;
         let cases = vec![(2, 3, 5), (10, 5, 15), (1, 1, 2)];
 
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn execute_nonexistent_export_func() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/func_add.wat")?;
+        let wasm = wat::parse_file("../../fixtures/func_add.wat")?;
         let mut runtime = Runtime::instantiate(wasm)?;
         let result = runtime.call("foobar", vec![]);
         assert!(result.is_err());
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn func_call() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/func_call.wat")?;
+        let wasm = wat::parse_file("../../fixtures/func_call.wat")?;
         let mut runtime = Runtime::instantiate(wasm)?;
         let cases = vec![(2, 4), (10, 20), (1, 2)];
 
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn call_imported_func() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/import.wat")?;
+        let wasm = wat::parse_file("../../fixtures/import.wat")?;
         let mut runtime = Runtime::instantiate(wasm)?;
         runtime.add_import("env", "add", |_, args| {
             let arg = args[0];
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn call_imported_func_not_found() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/import.wat")?;
+        let wasm = wat::parse_file("../../fixtures/import.wat")?;
         let mut runtime = Runtime::instantiate(wasm)?;
         runtime.add_import("env", "foo", |_, _| Ok(None))?;
         let result = runtime.call("call_add", vec![Value::I32(1)]);
@@ -431,7 +431,7 @@ mod tests {
 
     #[test]
     fn i32_const() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/i32_const.wat")?;
+        let wasm = wat::parse_file("../../fixtures/i32_const.wat")?;
         let mut runtime = Runtime::instantiate(wasm)?;
         let result = runtime.call("i32_const", vec![])?;
         assert_eq!(result, Some(Value::I32(42)));
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn local_set() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/local_set.wat")?;
+        let wasm = wat::parse_file("../../fixtures/local_set.wat")?;
         let mut runtime = Runtime::instantiate(wasm)?;
         let result = runtime.call("local_set", vec![])?;
         assert_eq!(result, Some(Value::I32(42)));
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn i32_store() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/i32_store.wat")?;
+        let wasm = wat::parse_file("../../fixtures/i32_store.wat")?;
         let mut runtime = Runtime::instantiate(wasm)?;
         runtime.call("i32_store", vec![])?;
         let memory = &runtime.store.memories[0].data;
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn i32_sub() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/func_sub.wat")?;
+        let wasm = wat::parse_file("../../fixtures/func_sub.wat")?;
         let mut runtime = Runtime::instantiate(wasm)?;
         let result = runtime.call("sub", vec![Value::I32(10), Value::I32(5)])?;
         assert_eq!(result, Some(Value::I32(5)));
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn i32_lts() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/func_lts.wat")?;
+        let wasm = wat::parse_file("../../fixtures/func_lts.wat")?;
         let mut runtime = Runtime::instantiate(wasm)?;
         let result = runtime.call("lts", vec![Value::I32(10), Value::I32(5)])?;
         assert_eq!(result, Some(Value::I32(0)));
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn fib() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/fibonacci.wat")?;
+        let wasm = wat::parse_file("../../fixtures/fibonacci.wat")?;
         let mut runtime = Runtime::instantiate(wasm)?;
         let cases = vec![
             (1, 1),

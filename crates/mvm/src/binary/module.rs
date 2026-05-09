@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn decode_func_local() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/func_local.wat")?;
+        let wasm = wat::parse_file("../../fixtures/func_local.wat")?;
         let module = Module::new(&wasm)?;
         assert_eq!(
             module,
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn decode_func_add() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/func_add.wat")?;
+        let wasm = wat::parse_file("../../fixtures/func_add.wat")?;
         let module = Module::new(&wasm)?;
         assert_eq!(
             module,
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn decode_func_call() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/func_call.wat")?;
+        let wasm = wat::parse_file("../../fixtures/func_call.wat")?;
         let module = Module::new(&wasm)?;
         assert_eq!(
             module,
@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn decode_import() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/import.wat")?;
+        let wasm = wat::parse_file("../../fixtures/import.wat")?;
         let module = Module::new(&wasm)?;
         assert_eq!(
             module,
@@ -679,7 +679,7 @@ mod tests {
 
     #[test]
     fn decode_fibonacci() -> anyhow::Result<()> {
-        let wasm = wat::parse_file("fixtures/fibonacci.wat")?;
+        let wasm = wat::parse_file("../../fixtures/fibonacci.wat")?;
         let module = Module::new(&wasm)?;
         assert_eq!(
             module,
