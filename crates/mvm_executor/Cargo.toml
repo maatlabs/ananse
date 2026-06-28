@@ -1,0 +1,19 @@
+[package]
+name = "mvm_executor"
+description = "Register-schedule interpreter for the Maat zkVM"
+keywords = ["wasm", "zero-knowledge", "zk", "zkvm"]
+categories = ["compilers", "cryptography", "wasm"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+mvm_decoder = { workspace = true }
+mvm_lift = { workspace = true }
+
+maat_field = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
+wasmparser = { workspace = true }

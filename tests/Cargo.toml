@@ -9,6 +9,8 @@ publish = false
 [dependencies]
 mvm_decoder = { workspace = true }
 mvm_lift = { workspace = true }
+mvm_executor = { workspace = true }
 
+maat_field = { workspace = true }
 wasmparser = { workspace = true }
 wat.workspace = true
