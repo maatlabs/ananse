@@ -1,5 +1,5 @@
-use mvm::execution::WasiSnapshotPreview1;
-use mvm::execution::runtime::Runtime;
+use ananse::execution::WasiSnapshotPreview1;
+use ananse::execution::runtime::Runtime;
 
 fn main() -> anyhow::Result<()> {
     let wasi = WasiSnapshotPreview1::new();

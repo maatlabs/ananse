@@ -1,17 +1,18 @@
 [package]
-name = "mvm"
-description = "Maat Virtual Machine: WASM-based zero-knowledge virtual machine (zkVM)"
+name = "ananse"
+description = "Ananse: WASM-based zero-knowledge virtual machine (zkVM)"
 keywords = ["wasm", "zero-knowledge", "zk", "zkvm", "stark"]
 categories = ["compilers", "cryptography", "wasm"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "../../README.md"
 
 [[bin]]
-name = "mvm"
+name = "ananse"
 path = "src/main.rs"
 
 [dependencies]

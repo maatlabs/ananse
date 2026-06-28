@@ -1,4 +1,4 @@
-//! WASM module decoder for Maat zkVM.
+//! WASM module decoder for Ananse zkVM.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

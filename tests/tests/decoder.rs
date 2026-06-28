@@ -1,19 +1,5 @@
-use mvm_decoder::{DecodeError, ExportKind, Module, WASI_MODULE};
-use mvm_tests::{wat_from_file, wat_from_str};
-
-const WAT_FILES: &[&str] = &[
-    "fibonacci.wat",
-    "func_add.wat",
-    "func_call.wat",
-    "func_local.wat",
-    "func_lts.wat",
-    "func_sub.wat",
-    "hello_world.wat",
-    "i32_const.wat",
-    "i32_store.wat",
-    "local_set.wat",
-    "memory.wat",
-];
+use ananse_decoder::{DecodeError, ExportKind, Module, WASI_MODULE};
+use ananse_tests::{WAT_FILES, wat_from_file, wat_from_str};
 
 #[test]
 fn wat_file_decodes() {
@@ -41,7 +27,7 @@ fn hello_world_extracts_wasi_import_and_start_export() {
 }
 
 #[test]
-fn float_opcode_in_function_body_is_rejected() {
+fn float_opcode_is_rejected() {
     let bytes = wat_from_str(
         r#"
         (module
@@ -51,15 +37,21 @@ fn float_opcode_in_function_body_is_rejected() {
             f32.add))
     "#,
     );
-    match Module::decode(&bytes) {
-        Err(DecodeError::FloatsDisabled {
-            func_idx, opcode, ..
-        }) => {
-            assert_eq!(func_idx, 0);
-            assert_eq!(opcode, "f32.const");
-        }
-        other => panic!("expected FloatsDisabled, got {other:?}"),
-    }
+    let result = Module::decode(&bytes);
+    assert!(
+        matches!(result, Err(DecodeError::ValidationFailed { .. })),
+        "float opcodes must be rejected at validation, got {result:?}"
+    );
+}
+
+#[test]
+fn float_typed_global_is_rejected() {
+    let bytes = wat_from_str(r#"(module (global f32 (f32.const 1.0)))"#);
+    let result = Module::decode(&bytes);
+    assert!(
+        matches!(result, Err(DecodeError::ValidationFailed { .. })),
+        "float-typed global must be rejected, got {result:?}"
+    );
 }
 
 #[test]

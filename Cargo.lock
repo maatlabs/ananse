@@ -3,6 +3,59 @@
 version = 4
 
 [[package]]
+name = "ananse"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "nom",
+ "nom-leb128",
+ "num-derive",
+ "num-traits",
+ "pretty_assertions",
+ "wat",
+]
+
+[[package]]
+name = "ananse_decoder"
+version = "0.2.0"
+dependencies = [
+ "thiserror",
+ "wasmparser",
+]
+
+[[package]]
+name = "ananse_executor"
+version = "0.2.0"
+dependencies = [
+ "ananse_decoder",
+ "ananse_lift",
+ "maat_field",
+ "thiserror",
+ "wasmparser",
+]
+
+[[package]]
+name = "ananse_lift"
+version = "0.2.0"
+dependencies = [
+ "ananse_decoder",
+ "thiserror",
+ "wasmparser",
+]
+
+[[package]]
+name = "ananse_tests"
+version = "0.2.0"
+dependencies = [
+ "ananse_decoder",
+ "ananse_executor",
+ "ananse_lift",
+ "maat_field",
+ "wasmparser",
+ "wat",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -67,6 +120,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
+name = "maat_field"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3465de0c000ab7bc7fb973b980ff16e643928d2549c3b14bd03f16ef66b6702c"
+dependencies = [
+ "thiserror",
+ "winter-math",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -77,35 +140,6 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
-
-[[package]]
-name = "mvm"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "nom",
- "nom-leb128",
- "num-derive",
- "num-traits",
- "pretty_assertions",
- "wat",
-]
-
-[[package]]
-name = "mvm_decoder"
-version = "0.2.0"
-dependencies = [
- "thiserror",
- "wasmparser",
-]
-
-[[package]]
-name = "mvm_tests"
-version = "0.2.0"
-dependencies = [
- "mvm_decoder",
- "wat",
-]
 
 [[package]]
 name = "nom"
@@ -267,6 +301,21 @@ checksum = "d75cd9e510603909748e6ebab89f27cd04472c1d9d85a3c88a7a6fc51a1a7934"
 dependencies = [
  "wast",
 ]
+
+[[package]]
+name = "winter-math"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7aecfb48ee6a8b4746392c8ff31e33e62df8528a3b5628c5af27b92b14aef1ea"
+dependencies = [
+ "winter-utils",
+]
+
+[[package]]
+name = "winter-utils"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9951263ef5317740cd0f49e618db00c72fabb70b75756ea26c4d5efe462c04dd"
 
 [[package]]
 name = "yansi"

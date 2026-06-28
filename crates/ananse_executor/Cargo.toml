@@ -1,17 +1,20 @@
 [package]
-name = "ananse_tests"
+name = "ananse_executor"
+description = "Register-schedule interpreter for the Ananse zkVM"
+keywords = ["wasm", "zero-knowledge", "zk", "zkvm"]
+categories = ["compilers", "cryptography", "wasm"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-publish = false
+homepage.workspace = true
+readme = "../../README.md"
 
 [dependencies]
 ananse_decoder = { workspace = true }
 ananse_lift = { workspace = true }
-ananse_executor = { workspace = true }
 
 maat_field = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
 wasmparser = { workspace = true }
-wat.workspace = true

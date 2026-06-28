@@ -1,0 +1,23 @@
+[package]
+name = "ananse_lift"
+description = "Static stack-to-register lift for the Ananse zkVM"
+keywords = ["wasm", "zero-knowledge", "zk", "zkvm"]
+categories = ["compilers", "cryptography", "wasm"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+
+[features]
+default = ["std"]
+std = ["thiserror/std", "wasmparser/std", "ananse_decoder/std"]
+alloc = ["ananse_decoder/alloc"]
+
+[dependencies]
+ananse_decoder = { workspace = true }
+
+thiserror = { workspace = true }
+wasmparser = { workspace = true }
