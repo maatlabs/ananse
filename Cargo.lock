@@ -100,10 +100,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mvm_lift"
+version = "0.2.0"
+dependencies = [
+ "mvm_decoder",
+ "thiserror",
+ "wasmparser",
+]
+
+[[package]]
 name = "mvm_tests"
 version = "0.2.0"
 dependencies = [
  "mvm_decoder",
+ "mvm_lift",
+ "wasmparser",
  "wat",
 ]
 

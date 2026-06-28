@@ -1,23 +1,9 @@
 use mvm_decoder::{DecodeError, ExportKind, Module, WASI_MODULE};
 use mvm_tests::{wat_from_file, wat_from_str};
 
-const WAT_FILES: &[&str] = &[
-    "fibonacci.wat",
-    "func_add.wat",
-    "func_call.wat",
-    "func_local.wat",
-    "func_lts.wat",
-    "func_sub.wat",
-    "hello_world.wat",
-    "i32_const.wat",
-    "i32_store.wat",
-    "local_set.wat",
-    "memory.wat",
-];
-
 #[test]
 fn wat_file_decodes() {
-    for name in WAT_FILES {
+    for name in mvm_tests::WAT_FILES {
         let bytes = wat_from_file(name);
         Module::decode(&bytes)
             .unwrap_or_else(|e| panic!("fixture {name} should decode but errored: {e}"));

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/mvm", "crates/mvm_decoder", "tests"]
+members = ["crates/mvm", "crates/mvm_decoder", "crates/mvm_lift", "tests"]
 default-members = ["crates/mvm"]
 
 [workspace.package]
@@ -12,8 +12,10 @@ homepage = "https://github.com/maatlabs/mvm"
 readme = "README.md"
 
 [workspace.dependencies]
-anyhow = "1"
 mvm_decoder = { path = "crates/mvm_decoder" }
+mvm_lift = { path = "crates/mvm_lift" }
+
+anyhow = "1"
 nom = "7"
 nom-leb128 = "0.2"
 num-derive = "0.4"
