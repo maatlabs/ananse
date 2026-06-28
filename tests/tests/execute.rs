@@ -1,13 +1,13 @@
-use maat_field::Felt;
-use mvm_decoder::{ImportEntry, Module};
-use mvm_executor::{
+use ananse_decoder::{ImportEntry, Module};
+use ananse_executor::{
     Entry, ExecuteError, Host, HostAction, MemAccess, NoHost, OpCode, StepRecord, Trap, Word,
     execute,
 };
-use mvm_lift::{Reg, lift};
-use mvm_tests::{WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
+use ananse_lift::{Reg, lift};
+use ananse_tests::{WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
+use maat_field::Felt;
 
-/// A deterministic host realizing the two WASI imports MVM admits: `fd_write`
+/// A deterministic host realizing the two WASI imports Ananse admits: `fd_write`
 /// appends each io-vector's bytes to a journal and reports the count written;
 /// `proc_exit` halts with its status code.
 #[derive(Default)]

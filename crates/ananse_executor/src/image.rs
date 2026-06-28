@@ -1,4 +1,4 @@
-use mvm_decoder::ImportEntry;
+use ananse_decoder::ImportEntry;
 use wasmparser::{
     BlockType, CompositeInnerType, ConstExpr, DataKind, FunctionBody, Imports, Operator, Parser,
     Payload, TypeRef, ValType,
@@ -41,7 +41,7 @@ pub(crate) struct FuncImage<'a> {
     pub(crate) ends: Vec<u32>,
 }
 
-/// A value type in MVM's integer subset.
+/// A value type in Ananse's integer subset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ValTy {
     I32,
@@ -285,7 +285,7 @@ fn block_ends(ops: &[Operator]) -> Result<Vec<u32>> {
     Ok(ends)
 }
 
-/// Evaluates a constant initializer expression to a single value. MVM's subset
+/// Evaluates a constant initializer expression to a single value. Ananse's subset
 /// admits only `i32.const` / `i64.const` initializers.
 fn eval_const(expr: &ConstExpr) -> Result<Word> {
     let mut reader = expr.get_operators_reader();

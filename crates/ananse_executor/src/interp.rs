@@ -1,5 +1,5 @@
-use mvm_decoder::Module;
-use mvm_lift::{LiftedFunction, LiftedProgram, Reg, Successors, lift};
+use ananse_decoder::Module;
+use ananse_lift::{LiftedFunction, LiftedProgram, Reg, Successors, lift};
 use wasmparser::Operator;
 
 use crate::image::{Image, PAGE_SIZE};

@@ -3,6 +3,59 @@
 version = 4
 
 [[package]]
+name = "ananse"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "nom",
+ "nom-leb128",
+ "num-derive",
+ "num-traits",
+ "pretty_assertions",
+ "wat",
+]
+
+[[package]]
+name = "ananse_decoder"
+version = "0.2.0"
+dependencies = [
+ "thiserror",
+ "wasmparser",
+]
+
+[[package]]
+name = "ananse_executor"
+version = "0.2.0"
+dependencies = [
+ "ananse_decoder",
+ "ananse_lift",
+ "maat_field",
+ "thiserror",
+ "wasmparser",
+]
+
+[[package]]
+name = "ananse_lift"
+version = "0.2.0"
+dependencies = [
+ "ananse_decoder",
+ "thiserror",
+ "wasmparser",
+]
+
+[[package]]
+name = "ananse_tests"
+version = "0.2.0"
+dependencies = [
+ "ananse_decoder",
+ "ananse_executor",
+ "ananse_lift",
+ "maat_field",
+ "wasmparser",
+ "wat",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -87,59 +140,6 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
-
-[[package]]
-name = "mvm"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "nom",
- "nom-leb128",
- "num-derive",
- "num-traits",
- "pretty_assertions",
- "wat",
-]
-
-[[package]]
-name = "mvm_decoder"
-version = "0.2.0"
-dependencies = [
- "thiserror",
- "wasmparser",
-]
-
-[[package]]
-name = "mvm_executor"
-version = "0.2.0"
-dependencies = [
- "maat_field",
- "mvm_decoder",
- "mvm_lift",
- "thiserror",
- "wasmparser",
-]
-
-[[package]]
-name = "mvm_lift"
-version = "0.2.0"
-dependencies = [
- "mvm_decoder",
- "thiserror",
- "wasmparser",
-]
-
-[[package]]
-name = "mvm_tests"
-version = "0.2.0"
-dependencies = [
- "maat_field",
- "mvm_decoder",
- "mvm_executor",
- "mvm_lift",
- "wasmparser",
- "wat",
-]
 
 [[package]]
 name = "nom"

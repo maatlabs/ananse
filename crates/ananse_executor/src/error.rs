@@ -1,4 +1,4 @@
-use mvm_lift::LiftError;
+use ananse_lift::LiftError;
 use wasmparser::BinaryReaderError;
 
 pub(crate) fn malformed(e: BinaryReaderError) -> ExecuteError {

@@ -1,26 +1,27 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/mvm",
-    "crates/mvm_decoder",
-    "crates/mvm_lift",
-    "crates/mvm_executor",
+    "crates/ananse",
+    "crates/ananse_decoder",
+    "crates/ananse_lift",
+    "crates/ananse_executor",
     "tests",
 ]
-default-members = ["crates/mvm"]
+default-members = ["crates/ananse"]
 
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
+rust-version = "1.89"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/maatlabs/mvm"
-homepage = "https://github.com/maatlabs/mvm"
+repository = "https://github.com/maatlabs/ananse"
+homepage = "https://github.com/maatlabs/ananse"
 readme = "README.md"
 
 [workspace.dependencies]
-mvm_decoder = { path = "crates/mvm_decoder" }
-mvm_lift = { path = "crates/mvm_lift" }
-mvm_executor = { path = "crates/mvm_executor" }
+ananse_decoder = { path = "crates/ananse_decoder", version = "0.2.0" }
+ananse_lift = { path = "crates/ananse_lift", version = "0.2.0" }
+ananse_executor = { path = "crates/ananse_executor", version = "0.2.0" }
 
 maat_field = "0.19.0"
 anyhow = "1"

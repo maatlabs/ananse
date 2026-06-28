@@ -12,7 +12,7 @@ pub enum DecodeError {
         message: String,
     },
 
-    /// The module is well-formed but fails validation under MVM's restricted
+    /// The module is well-formed but fails validation under Ananse's restricted
     /// feature set. Floating-point types and instructions, SIMD, threads, GC,
     /// reference types, multi-memory, tail calls, and exceptions are all
     /// rejected here, because their corresponding features are left disabled.
@@ -31,7 +31,7 @@ pub enum DecodeError {
         module: String,
     },
 
-    /// An import references a WASI function outside the deterministic set MVM
+    /// An import references a WASI function outside the deterministic set Ananse
     /// supports (`fd_write`, `proc_exit`).
     #[error(
         "WASI import `{module}::{name}` is not permitted (only `fd_write` and `proc_exit` are allowed)"

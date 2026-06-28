@@ -8,16 +8,16 @@ use wasmparser::{
 
 use crate::{DecodeError, Result};
 
-/// The only import module namespace MVM permits.
+/// The only import module namespace Ananse permits.
 pub const WASI_MODULE: &str = "wasi_snapshot_preview1";
 
 const ALLOWED_WASI_FUNCS: &[&str] = &["fd_write", "proc_exit"];
 
 /// A validated WebAssembly module: the raw bytes plus extracted import/export
-/// metadata. Successful construction guarantees the module lies within MVM's
+/// metadata. Successful construction guarantees the module lies within Ananse's
 /// integer-only WASM subset (floating-point, SIMD, threads, GC, reference
 /// types, multi-memory, tail calls, and exceptions are all rejected) and that
-/// it imports only the deterministic WASI functions MVM supports.
+/// it imports only the deterministic WASI functions Ananse supports.
 #[derive(Debug, Clone)]
 pub struct Module {
     bytes: Vec<u8>,
@@ -60,7 +60,7 @@ pub enum ExportKind {
 }
 
 impl Module {
-    /// Validates `bytes` against MVM's restricted feature set and extracts
+    /// Validates `bytes` against Ananse's restricted feature set and extracts
     /// import/export metadata. Returns a [`DecodeError`] if the module is
     /// malformed, uses a feature outside the integer-only WASM subset, or
     /// imports anything other than the permitted WASI functions.
@@ -88,7 +88,7 @@ impl Module {
     }
 }
 
-/// The WebAssembly feature set MVM accepts. `FLOATS` is deliberately left
+/// The WebAssembly feature set Ananse accepts. `FLOATS` is deliberately left
 /// disabled: with it off, the validator rejects every floating-point type and
 /// instruction wherever it appears---function signatures, globals, locals, and
 /// instruction bodies alike.

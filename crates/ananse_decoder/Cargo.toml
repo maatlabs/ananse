@@ -1,11 +1,12 @@
 [package]
-name = "mvm_decoder"
-description = "WASM module decoder for the Maat zkVM"
+name = "ananse_decoder"
+description = "WASM module decoder for the Ananse zkVM"
 keywords = ["wasm", "zero-knowledge", "zk", "zkvm", "decoder"]
 categories = ["compilers", "cryptography", "wasm"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "../../README.md"

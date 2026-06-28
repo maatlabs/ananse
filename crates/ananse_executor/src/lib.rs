@@ -1,8 +1,8 @@
-//! Register-schedule interpreter for the Maat zkVM.
+//! Register-schedule interpreter for the Ananse zkVM.
 //!
-//! MVM proves WebAssembly directly against a register-shaped AIR. This crate
-//! executes a validated [`Module`](mvm_decoder::Module) under the static
-//! register schedule [`mvm_lift`] produces and emits, per executed operator, the
+//! Ananse proves WebAssembly directly against a register-shaped AIR. This crate
+//! executes a validated [`Module`](ananse_decoder::Module) under the static
+//! register schedule [`ananse_lift`] produces and emits, per executed operator, the
 //! [`StepRecord`] every later AIR family consumes.
 //!
 //! Execution reads opcode semantics and immediates from the module while taking
@@ -16,7 +16,7 @@
 //! execution path, and nondeterministic imports are already rejected at decode
 //! time.
 //!
-//! Integer arithmetic in MVM's own bookkeeping is checked; the WebAssembly
+//! Integer arithmetic in Ananse's own bookkeeping is checked; the WebAssembly
 //! operators themselves use the specification's wrapping and trapping semantics.
 
 #![forbid(unsafe_code)]

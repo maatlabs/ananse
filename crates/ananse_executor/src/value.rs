@@ -4,7 +4,7 @@ use crate::Trap;
 
 /// A WebAssembly integer value, held as its unsigned bit pattern.
 ///
-/// The integer subset MVM proves has two value types, `i32` and `i64`. A
+/// The integer subset Ananse proves has two value types, `i32` and `i64`. A
 /// [`Word`] keeps the runtime width explicit so each operator's operands carry
 /// their own type, which is what lets the executor stay a single code path over
 /// both widths.

@@ -1,4 +1,4 @@
-use mvm_lift::Reg;
+use ananse_lift::Reg;
 
 use crate::Word;
 
@@ -53,7 +53,7 @@ pub struct StepRecord {
 /// address) is recovered from the [`StepRecord`]'s register and memory effects.
 ///
 /// This is the per-opcode selector the register-AIR keys on: one variant per
-/// operator in MVM's integer subset of WASM.
+/// operator in Ananse's integer subset of WASM.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[allow(missing_docs)]
 pub enum OpCode {

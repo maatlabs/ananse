@@ -1,15 +1,16 @@
 [package]
-name = "mvm_tests"
+name = "ananse_tests"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 repository.workspace = true
 publish = false
 
 [dependencies]
-mvm_decoder = { workspace = true }
-mvm_lift = { workspace = true }
-mvm_executor = { workspace = true }
+ananse_decoder = { workspace = true }
+ananse_lift = { workspace = true }
+ananse_executor = { workspace = true }
 
 maat_field = { workspace = true }
 wasmparser = { workspace = true }

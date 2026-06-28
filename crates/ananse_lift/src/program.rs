@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 /// A register operand referenced by a lifted instruction.
 ///
-/// MVM lifts WebAssembly's operand stack, locals, and globals into a single
+/// Ananse lifts WebAssembly's operand stack, locals, and globals into a single
 /// per-function register file whose addresses are fixed at analysis time. The
 /// file is laid out in three contiguous banks, low address to high:
 ///

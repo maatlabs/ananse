@@ -1,6 +1,6 @@
-use mvm_decoder::Module;
-use mvm_lift::{Reg, Successors, lift};
-use mvm_tests::{WAT_FILES, WAT_SNIPPETS, wasm_features, wat_from_file, wat_from_str};
+use ananse_decoder::Module;
+use ananse_lift::{Reg, Successors, lift};
+use ananse_tests::{WAT_FILES, WAT_SNIPPETS, wasm_features, wat_from_file, wat_from_str};
 use wasmparser::{Parser, ValidPayload, Validator};
 
 /// Operand-stack height entering each operator, per defined function, computed by

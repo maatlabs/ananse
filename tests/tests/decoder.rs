@@ -1,9 +1,9 @@
-use mvm_decoder::{DecodeError, ExportKind, Module, WASI_MODULE};
-use mvm_tests::{wat_from_file, wat_from_str};
+use ananse_decoder::{DecodeError, ExportKind, Module, WASI_MODULE};
+use ananse_tests::{WAT_FILES, wat_from_file, wat_from_str};
 
 #[test]
 fn wat_file_decodes() {
-    for name in mvm_tests::WAT_FILES {
+    for name in WAT_FILES {
         let bytes = wat_from_file(name);
         Module::decode(&bytes)
             .unwrap_or_else(|e| panic!("fixture {name} should decode but errored: {e}"));

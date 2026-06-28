@@ -1,10 +1,10 @@
-use mvm_decoder::ImportEntry;
+use ananse_decoder::ImportEntry;
 
 use crate::{ExecuteError, Result, Word};
 
 /// The host environment imported functions are dispatched to.
 ///
-/// MVM's decoder admits only the `wasi_snapshot_preview1` `fd_write` and
+/// Ananse's decoder admits only the `wasi_snapshot_preview1` `fd_write` and
 /// `proc_exit` imports, both of which must be realized deterministically: no
 /// wall-clock time, no randomness, no real file descriptors. The executor never
 /// implements a host itself---it is supplied by the caller---so the WASI

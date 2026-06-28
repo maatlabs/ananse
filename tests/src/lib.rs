@@ -1,4 +1,4 @@
-//! Shared utilities for MVM integration tests.
+//! Shared utilities for Ananse integration tests.
 
 use std::path::{Path, PathBuf};
 

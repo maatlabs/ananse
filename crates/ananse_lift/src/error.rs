@@ -20,7 +20,7 @@ pub(crate) fn malformed(e: BinaryReaderError) -> LiftError {
 
 /// An error produced while lifting a validated module to the static register form.
 ///
-/// A [`Module`](mvm_decoder::Module) reaches the lift only after the decoder has
+/// A [`Module`](ananse_decoder::Module) reaches the lift only after the decoder has
 /// validated it, so [`LiftError::MalformedModule`] should never occur in
 /// practice; it exists to keep the lift total rather than panicking on an
 /// internally inconsistent input.
@@ -36,7 +36,7 @@ pub enum LiftError {
         message: String,
     },
 
-    /// An operator outside MVM's integer subset of WASM was encountered.
+    /// An operator outside Ananse's integer subset of WASM was encountered.
     #[error("unsupported operator at offset {offset}")]
     UnsupportedOperator {
         /// Byte offset of the rejected operator.
