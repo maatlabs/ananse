@@ -1,4 +1,4 @@
-use ananse_lift::Reg;
+use ananse_lift::Register;
 
 use crate::Word;
 
@@ -173,7 +173,7 @@ pub enum OpCode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RegAccess {
     /// The depth-indexed register operand from the static schedule.
-    pub reg: Reg,
+    pub reg: Register,
     /// The value held in that register at this step.
     pub value: Word,
 }

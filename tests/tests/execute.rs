@@ -3,7 +3,7 @@ use ananse_executor::{
     Entry, ExecuteError, Host, HostAction, MemAccess, NoHost, OpCode, StepRecord, Trap, Word,
     execute,
 };
-use ananse_lift::{Reg, lift};
+use ananse_lift::{Register, lift};
 use ananse_tests::{WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
 use maat_field::Felt;
 
@@ -121,8 +121,8 @@ fn records_agree_with_lift_schedule() {
                 .find(|f| f.func_index == record.func_index)
                 .expect("executed function was lifted");
             let scheduled = &lifted.instrs[record.pc as usize];
-            let read_regs: Vec<Reg> = record.reads.iter().map(|r| r.reg).collect();
-            let write_regs: Vec<Reg> = record.writes.iter().map(|w| w.reg).collect();
+            let read_regs: Vec<Register> = record.reads.iter().map(|r| r.reg).collect();
+            let write_regs: Vec<Register> = record.writes.iter().map(|w| w.reg).collect();
             assert_eq!(
                 read_regs, scheduled.reads,
                 "{name} fn{} pc{}: read registers",

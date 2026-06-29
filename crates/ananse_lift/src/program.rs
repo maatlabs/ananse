@@ -11,12 +11,12 @@ use alloc::vec::Vec;
 /// 3. operand stack `[locals_count + globals_count, ..)` -- slot at depth `d` maps to
 ///    register `locals_count + globals_count + d`.
 ///
-/// A [`Reg`] keeps the bank symbolic rather than pre-flattened to that absolute
+/// A [`Register`] keeps the bank symbolic rather than pre-flattened to that absolute
 /// index: the flattening is a trace-layout decision (globals are shared across
 /// functions, locals and stack slots are per-call-frame), so the lift records
 /// *what* each instruction touches and leaves the column assignment downstream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Reg {
+pub enum Register {
     /// A local slot, addressed by its WebAssembly local index (parameters first,
     /// then declared locals).
     Local(u32),
@@ -72,9 +72,9 @@ pub struct InstrSchedule {
     pub height_in: u32,
     /// Registers read, in the order the instruction consumes them: the top of
     /// the operand stack first. Empty for instructions in unreachable code.
-    pub reads: Vec<Reg>,
+    pub reads: Vec<Register>,
     /// Registers written. Empty for instructions in unreachable code.
-    pub writes: Vec<Reg>,
+    pub writes: Vec<Register>,
     /// In-function control-flow successor(s).
     pub successors: Successors,
 }
