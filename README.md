@@ -1,6 +1,6 @@
 <div align="center">
   <h1>Ananse</h1>
-  <h2>A WASM-based zero-knowledge virtual machine (zkVM)</h2>
+  <h2>A WebAssembly-native zero-knowledge virtual machine (zkVM)</h2>
   <br />
 </div>
 
@@ -9,6 +9,8 @@
 
 [![CI](https://github.com/maatlabs/ananse/workflows/CI/badge.svg)](https://github.com/maatlabs/ananse/actions)
 [![License](https://img.shields.io/crates/l/ananse.svg)](https://github.com/maatlabs/ananse#license)
+[![Crates.io](https://img.shields.io/crates/v/ananse.svg)](https://crates.io/crates/ananse)
+[![MSRV](https://img.shields.io/crates/msrv/ananse.svg)](https://crates.io/crates/ananse)
 [![Releases](https://img.shields.io/github/v/release/maatlabs/ananse)](https://github.com/maatlabs/ananse/releases)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg?style=flat-square)](https://github.com/maatlabs/ananse/blob/main/CONTRIBUTING.md)
 
@@ -18,7 +20,7 @@
 
 ## Overview
 
-_Ananse_ (the Akan/Twi word for spider) is a WebAssembly virtual machine whose execution can be proved under a zero-knowledge STARK. Any program that compiles to the integer subset of WASM---written in Rust, C, C++, AssemblyScript, or any other language with a WASM target---runs on Ananse and produces a cryptographic proof that a third party can verify without re-executing the program.
+_Ananse_ (the Akan/Twi word for spider) is a WebAssembly-native virtual machine whose execution can be proved under a zero-knowledge STARK. Any program that compiles to the integer subset of WASM---written in Rust, C, C++, AssemblyScript, or any other language with a WASM target---runs on Ananse and produces a cryptographic proof that a third party can verify without re-executing the program.
 
 ## Status
 
@@ -77,6 +79,8 @@ crates/
 |-- ananse_air/          # winter-air::Air for the WASM integer subset
 |-- ananse_prover/       # winter-prover wrapper + Receipt type
 +-- ananse_wasi/         # minimal deterministic wasi_snapshot_preview1
+fixtures/                # WAT/WASM fixture pool, consumed by the tests crate
+tests/                   # `ananse_tests` workspace member: shared helpers + integration tests
 ```
 
 ## Contributing
