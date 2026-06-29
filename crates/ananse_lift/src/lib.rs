@@ -26,7 +26,7 @@ mod program;
 
 use ananse_decoder::Module;
 pub use error::LiftError;
-pub use program::{InstrSchedule, LiftedFunction, LiftedProgram, Register, Successors};
+pub use program::{InstructionSchedule, LiftedFunction, LiftedProgram, Register, Successors};
 
 /// Result alias for lift operations.
 pub type Result<T> = core::result::Result<T, LiftError>;

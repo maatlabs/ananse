@@ -6,7 +6,8 @@ use wasmparser::{
 };
 
 use crate::{
-    InstrSchedule, LiftError, LiftedFunction, Register, Result, Successors, error as lift_error,
+    InstructionSchedule, LiftError, LiftedFunction, Register, Result, Successors,
+    error as lift_error,
 };
 
 /// Upper bound on a function's register-file width. Real WebAssembly functions
@@ -265,7 +266,7 @@ struct Lifter<'a> {
     height: u32,
     max_height: u32,
     ctrl: Vec<Frame>,
-    instrs: Vec<InstrSchedule>,
+    instrs: Vec<InstructionSchedule>,
 }
 
 impl<'a> Lifter<'a> {
@@ -358,7 +359,7 @@ impl<'a> Lifter<'a> {
         writes: Vec<Register>,
         successors: Successors,
     ) {
-        self.instrs.push(InstrSchedule {
+        self.instrs.push(InstructionSchedule {
             pc,
             height_in,
             reads,
@@ -438,7 +439,7 @@ impl<'a> Lifter<'a> {
         }
 
         if let Some(if_idx) = frame.if_instr
-            && let Some(InstrSchedule {
+            && let Some(InstructionSchedule {
                 successors: Successors::Branch { not_taken, .. },
                 ..
             }) = self.instrs.get_mut(if_idx)
@@ -597,7 +598,7 @@ impl<'a> Lifter<'a> {
                 let else_body = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
                     func_index: self.func_index,
                 })?;
-                if let Some(InstrSchedule {
+                if let Some(InstructionSchedule {
                     successors: Successors::Branch { not_taken, .. },
                     ..
                 }) = self.instrs.get_mut(if_idx)

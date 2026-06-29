@@ -6,9 +6,9 @@ use alloc::vec::Vec;
 /// per-function register file whose addresses are fixed at analysis time. The
 /// file is laid out in three contiguous banks, low address to high:
 ///
-/// 1. locals `[0, locals_count)` -- function parameters followed by declared locals;
-/// 2. globals `[locals_count, locals_count + globals_count)` -- module globals;
-/// 3. operand stack `[locals_count + globals_count, ..)` -- slot at depth `d` maps to
+/// 1. locals `[0, locals_count)` --- function parameters followed by declared locals;
+/// 2. globals `[locals_count, locals_count + globals_count)` --- module globals;
+/// 3. operand stack `[locals_count + globals_count, ..)` --- slot at depth `d` maps to
 ///    register `locals_count + globals_count + d`.
 ///
 /// A [`Register`] keeps the bank symbolic rather than pre-flattened to that absolute
@@ -54,18 +54,18 @@ pub struct LiftedFunction {
     /// Per-program-point schedule in body order; `instrs[i].pc == i`. The index
     /// one past the last entry is the function-exit sentinel used by
     /// [`Successors`].
-    pub instrs: Vec<InstrSchedule>,
+    pub instrs: Vec<InstructionSchedule>,
 }
 
 /// The static schedule for a single WebAssembly instruction.
 ///
-/// One [`InstrSchedule`] is emitted per operator in body order, so
+/// One [`InstructionSchedule`] is emitted per operator in body order, so
 /// `instrs[i].pc == i`. It records the operand-stack height entering the
 /// instruction, the register operands it reads and writes, and where control
 /// flows next -- everything the register-AIR needs that is fixed by the module's
 /// static stack typing, with no runtime stack pointer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InstrSchedule {
+pub struct InstructionSchedule {
     /// Program point: the operator's zero-based index within the function body.
     pub pc: u32,
     /// Operand-stack height immediately before the instruction executes.
