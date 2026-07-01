@@ -2,8 +2,15 @@
 
 use std::path::{Path, PathBuf};
 
-use ananse_decoder::ImportEntry;
-use ananse_executor::{ExecuteError, Host, HostAction, Word};
+use ananse_air::{
+    Air, AnanseAir, AnansePublicInputs, BatchingMethod, EvaluationFrame, FieldExtension,
+    NUM_TRANSITION_CONSTRAINTS, ProofOptions, TraceInfo,
+};
+use ananse_decoder::{ImportEntry, Module};
+use ananse_executor::{Entry, ExecuteError, Host, HostAction, Word, execute};
+use ananse_lift::lift;
+use ananse_trace::Trace;
+use maat_field::{Felt, FieldElement};
 use wasmparser::WasmFeatures;
 
 pub const WAT_FILES: &[&str] = &[
@@ -74,6 +81,16 @@ pub const SINGLE_FRAME_FIXTURES: &[&str] = &[
     "i32_store.wat",
     "hello_world.wat",
 ];
+
+/// Decodes, lifts, executes from the automatic entry point, and builds the trace.
+pub fn trace_of(bytes: &[u8]) -> Trace {
+    let module = Module::decode(bytes).expect("decode");
+    let program = lift(&module).expect("lift");
+    let mut host = TestHost::default();
+    let mut records = Vec::new();
+    execute(&module, &Entry::Auto, &[], &mut host, &mut records).expect("execute");
+    Trace::build(&program, records).expect("build")
+}
 
 /// A deterministic host realizing the two WASI imports Ananse admits: `fd_write`
 /// appends each io-vector's bytes to a journal and reports the count written;
@@ -153,4 +170,55 @@ pub fn wat_from_file(name: &str) -> Vec<u8> {
 
 pub fn wat_from_str(wat: &str) -> Vec<u8> {
     wat::parse_str(wat).expect("WAT assembles to WASM")
+}
+
+/// Builds the register-shaped AIR for `trace` with development-grade proof
+/// options, ready for direct constraint evaluation.
+pub fn air_for(trace: &Trace) -> AnanseAir {
+    let trace_info = TraceInfo::new(trace.width(), trace.length());
+    let options = ProofOptions::new(
+        27,
+        8,
+        0,
+        FieldExtension::None,
+        4,
+        255,
+        BatchingMethod::Algebraic,
+        BatchingMethod::Algebraic,
+    );
+    AnanseAir::new(trace_info, AnansePublicInputs, options)
+}
+
+/// Evaluates every transition constraint of `air` across the column-major
+/// `columns` (each of length `length`) and returns the `(row, constraint)` pairs
+/// whose residual does not vanish. An empty result means the trace satisfies the
+/// whole transition system; a non-empty one localizes each violation. Transitions
+/// are checked on rows `0..length - 1`, matching the divisor that excludes the
+/// wrap from the last row back to the first.
+pub fn transition_violations(
+    air: &AnanseAir,
+    columns: &[Vec<Felt>],
+    length: usize,
+) -> Vec<(usize, usize)> {
+    (0..length.saturating_sub(1))
+        .flat_map(|row| {
+            let current = columns
+                .iter()
+                .map(|column| column[row])
+                .collect::<Vec<Felt>>();
+            let next = columns
+                .iter()
+                .map(|column| column[row + 1])
+                .collect::<Vec<Felt>>();
+            let frame = EvaluationFrame::from_rows(current, next);
+            let mut result = vec![Felt::ZERO; NUM_TRANSITION_CONSTRAINTS];
+            air.evaluate_transition(&frame, &[], &mut result);
+            result
+                .into_iter()
+                .enumerate()
+                .filter(|(_, residual)| *residual != Felt::ZERO)
+                .map(move |(constraint, _)| (row, constraint))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }

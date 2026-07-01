@@ -1,0 +1,18 @@
+[package]
+name = "ananse_air"
+description = "Register-shaped AIR (algebraic intermediate representation) for the Ananse zkVM"
+keywords = ["wasm", "zero-knowledge", "zk", "zkvm"]
+categories = ["compilers", "cryptography", "wasm"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+ananse_trace = { workspace = true }
+
+maat_field = { workspace = true }
+winter-air = { workspace = true }

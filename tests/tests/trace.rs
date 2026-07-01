@@ -1,23 +1,13 @@
 use ananse_decoder::Module;
 use ananse_executor::{Entry, NoHost, OpCode, Transition, Word, execute};
 use ananse_lift::lift;
-use ananse_tests::{SINGLE_FRAME_FIXTURES, TestHost, wat_from_file, wat_from_str};
+use ananse_tests::{SINGLE_FRAME_FIXTURES, TestHost, trace_of, wat_from_file, wat_from_str};
 use ananse_trace::layout::{
     COL_MEM_ADDR, COL_MEM_IS_WRITE, COL_MEM_VAL_HI, COL_MEM_VAL_LO, COL_PC, SELECTOR_BASE,
 };
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING};
 use ananse_trace::{Trace, TraceError};
 use maat_field::{Felt, FieldElement};
-
-/// Decodes, lifts, executes from the automatic entry point, and builds the trace.
-fn trace_of(bytes: &[u8]) -> Trace {
-    let module = Module::decode(bytes).expect("decode");
-    let program = lift(&module).expect("lift");
-    let mut host = TestHost::default();
-    let mut records = Vec::new();
-    execute(&module, &Entry::Auto, &[], &mut host, &mut records).expect("execute");
-    Trace::build(&program, records).expect("build")
-}
 
 fn column(trace: &Trace, index: usize) -> &[Felt] {
     trace.column_at(index).expect("column in range")
