@@ -5,7 +5,8 @@ use ananse_lift::{LiftedFunction, LiftedProgram, Register};
 use maat_field::{Felt, FieldElement};
 
 use crate::layout::{
-    COL_MEM_ADDR, COL_MEM_IS_WRITE, COL_MEM_VAL, COL_PC, REGISTER_BASE, SELECTOR_BASE, trace_width,
+    COL_MEM_ADDR, COL_MEM_IS_WRITE, COL_MEM_VAL_HI, COL_MEM_VAL_LO, COL_PC, SELECTOR_BASE,
+    register_limb_columns, trace_width,
 };
 use crate::memory::{self, MemoryAccess};
 use crate::selector::{SEL_PADDING, opcode_index};
@@ -128,9 +129,9 @@ impl Trace {
         self.register_width
     }
 
-    /// The trace column holding `register`, or `None` if it is outside this
-    /// frame's register file.
-    pub fn register_column(&self, register: Register) -> Option<usize> {
+    /// The `(lo, hi)` limb columns holding `register`, or `None` if it is outside
+    /// this frame's register file.
+    pub fn register_columns(&self, register: Register) -> Option<(usize, usize)> {
         let exec_frame = ExecFrame {
             locals: self.locals_count,
             globals: self.globals_count,
@@ -138,7 +139,7 @@ impl Trace {
         };
         resolve_register(register, exec_frame)
             .ok()
-            .map(|offset| REGISTER_BASE + offset)
+            .map(register_limb_columns)
     }
 }
 
@@ -147,7 +148,7 @@ impl Trace {
 fn build_columns(
     records: &[StepRecord],
     exec_frame: ExecFrame,
-    mut regfile: Vec<Felt>,
+    mut regfile: Vec<(Felt, Felt)>,
 ) -> Result<(Vec<Vec<Felt>>, usize, usize)> {
     let steps = records.len();
     let length = steps.max(MIN_TRACE_ROWS).next_power_of_two();
@@ -157,12 +158,14 @@ fn build_columns(
     for (row, record) in records.iter().enumerate() {
         columns[COL_PC][row] = Felt::new(u64::from(record.pc));
         columns[SELECTOR_BASE + opcode_index(record.opcode)][row] = Felt::ONE;
-        for (offset, &value) in regfile.iter().enumerate() {
-            columns[REGISTER_BASE + offset][row] = value;
+        for (offset, &(lo, hi)) in regfile.iter().enumerate() {
+            let (lo_col, hi_col) = register_limb_columns(offset);
+            columns[lo_col][row] = lo;
+            columns[hi_col][row] = hi;
         }
         for read in &record.reads {
             let offset = resolve_register(read.reg, exec_frame)?;
-            if regfile[offset] != read.value.to_felt() {
+            if regfile[offset] != read.value.to_limbs() {
                 return Err(TraceError::RegisterInconsistency {
                     step: row,
                     register: read.reg,
@@ -171,12 +174,13 @@ fn build_columns(
         }
         if let Some(access) = record.memory.first() {
             columns[COL_MEM_ADDR][row] = Felt::new(access.address);
-            columns[COL_MEM_VAL][row] = Felt::new(access.value);
+            columns[COL_MEM_VAL_LO][row] = Felt::new(access.value & 0xFFFF_FFFF);
+            columns[COL_MEM_VAL_HI][row] = Felt::new(access.value >> 32);
             columns[COL_MEM_IS_WRITE][row] = if access.store { Felt::ONE } else { Felt::ZERO };
         }
         for write in &record.writes {
             let offset = resolve_register(write.reg, exec_frame)?;
-            regfile[offset] = write.value.to_felt();
+            regfile[offset] = write.value.to_limbs();
         }
     }
 
@@ -185,8 +189,10 @@ fn build_columns(
     let last_pc = records.last().map_or(0, |record| record.pc);
     columns[COL_PC][steps..].fill(Felt::new(u64::from(last_pc)));
     columns[SELECTOR_BASE + SEL_PADDING][steps..].fill(Felt::ONE);
-    for (offset, &value) in regfile.iter().enumerate() {
-        columns[REGISTER_BASE + offset][steps..].fill(value);
+    for (offset, &(lo, hi)) in regfile.iter().enumerate() {
+        let (lo_col, hi_col) = register_limb_columns(offset);
+        columns[lo_col][steps..].fill(lo);
+        columns[hi_col][steps..].fill(hi);
     }
 
     Ok((columns, steps, length))
@@ -214,15 +220,18 @@ fn resolve_register(register: Register, exec_frame: ExecFrame) -> Result<usize> 
 /// Recovers the register file entering the first step: a register's value before
 /// its first write is the value its first pre-write read observed (else zero, an
 /// unconstrained slot the AIR never reads).
-fn initial_register_file(records: &[StepRecord], exec_frame: ExecFrame) -> Result<Vec<Felt>> {
-    let mut initial = vec![Felt::ZERO; exec_frame.width];
+fn initial_register_file(
+    records: &[StepRecord],
+    exec_frame: ExecFrame,
+) -> Result<Vec<(Felt, Felt)>> {
+    let mut initial = vec![(Felt::ZERO, Felt::ZERO); exec_frame.width];
     let mut written = vec![false; exec_frame.width];
     let mut known = vec![false; exec_frame.width];
     for record in records {
         for read in &record.reads {
             let offset = resolve_register(read.reg, exec_frame)?;
             if !written[offset] && !known[offset] {
-                initial[offset] = read.value.to_felt();
+                initial[offset] = read.value.to_limbs();
                 known[offset] = true;
             }
         }

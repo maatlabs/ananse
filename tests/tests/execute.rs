@@ -4,7 +4,7 @@ use ananse_executor::{
 };
 use ananse_lift::{Register, lift};
 use ananse_tests::{TestHost, WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
-use maat_field::Felt;
+use maat_field::{Felt, FieldElement};
 
 /// Runs a module from its automatic entry point, collecting the record stream.
 fn records(bytes: &[u8]) -> Vec<StepRecord> {
@@ -198,14 +198,18 @@ fn unreachable_traps() {
 }
 
 #[test]
-fn field_encoding_uses_the_bit_pattern_residue() {
+fn field_encoding_splits_values_into_faithful_limbs() {
     let i32_neg = run_export(
         &wat_from_str("(module (func (export \"f\") (result i32) (i32.const -1)))"),
         "f",
         &[],
     );
     assert_eq!(i32_neg, vec![Word::I32(u32::MAX)]);
-    assert_eq!(i32_neg[0].to_felt(), Felt::new(u64::from(u32::MAX)));
+    // An `i32` occupies the low limb alone; the high limb is zero.
+    assert_eq!(
+        i32_neg[0].to_limbs(),
+        (Felt::new(u64::from(u32::MAX)), Felt::ZERO)
+    );
 
     let i64_neg = run_export(
         &wat_from_str("(module (func (export \"f\") (result i64) (i64.const -1)))"),
@@ -213,11 +217,17 @@ fn field_encoding_uses_the_bit_pattern_residue() {
         &[],
     );
     assert_eq!(i64_neg, vec![Word::I64(u64::MAX)]);
-    assert_eq!(i64_neg[0].to_felt(), Felt::new(u64::MAX));
+    // `i64` -1 (`0xFFFF_FFFF_FFFF_FFFF`) exceeds the Goldilocks prime, so a
+    // single residue would alias it to `0xFFFF_FFFE`. The two limbs preserve it
+    // in full: `0xFFFF_FFFF + 0xFFFF_FFFF * 2^32` reconstructs the true value.
+    assert_eq!(
+        i64_neg[0].to_limbs(),
+        (Felt::new(0xFFFF_FFFF), Felt::new(0xFFFF_FFFF))
+    );
 
-    // An `i32` and an `i64` of value -1 occupy distinct field residues: the
-    // `i32` carries its 32-bit pattern, the `i64` its reduced 64-bit pattern.
-    assert_ne!(i32_neg[0].to_felt(), i64_neg[0].to_felt());
+    // The high limb distinguishes the two: an `i32` -1 has a zero high limb, an
+    // `i64` -1 a saturated one.
+    assert_ne!(i32_neg[0].to_limbs().1, i64_neg[0].to_limbs().1);
 }
 
 #[test]

@@ -17,12 +17,15 @@ pub enum Word {
 }
 
 impl Word {
-    /// The Goldilocks field encoding of this value's bit pattern.
-    pub fn to_felt(self) -> Felt {
-        match self {
-            Word::I32(bits) => Felt::new(u64::from(bits)),
-            Word::I64(bits) => Felt::new(bits),
-        }
+    /// This value's little-endian 32-bit limbs `(lo, hi)` as Goldilocks
+    /// residues, with the value equal to `lo + hi * 2^32`. An `i32` occupies the
+    /// low limb alone (`hi` is zero); an `i64` splits across both.
+    pub fn to_limbs(self) -> (Felt, Felt) {
+        let bits = match self {
+            Word::I32(bits) => u64::from(bits),
+            Word::I64(bits) => bits,
+        };
+        (Felt::new(bits & 0xFFFF_FFFF), Felt::new(bits >> 32))
     }
 
     /// Whether this value is non-zero, the WebAssembly truth value used by
