@@ -1,5 +1,21 @@
 use alloc::string::String;
 
+use wasmparser::BinaryReaderError;
+
+pub(crate) fn invalid_binary(e: BinaryReaderError) -> DecodeError {
+    DecodeError::InvalidBinary {
+        offset: e.offset(),
+        message: e.to_string(),
+    }
+}
+
+pub(crate) fn validation_failed(e: BinaryReaderError) -> DecodeError {
+    DecodeError::ValidationFailed {
+        offset: e.offset(),
+        message: e.to_string(),
+    }
+}
+
 /// An error produced while decoding or validating a WebAssembly module.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DecodeError {

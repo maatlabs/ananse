@@ -39,6 +39,6 @@ pub type Result<T> = core::result::Result<T, LiftError>;
 /// subset of WASM rather than malformed user input.
 pub fn lift(module: &Module) -> Result<LiftedProgram> {
     Ok(LiftedProgram {
-        functions: analysis::lift_bytes(module.bytes())?,
+        functions: analysis::lift_functions(module.bytes())?,
     })
 }

@@ -21,7 +21,7 @@ const MAX_REGISTER_FILE_WIDTH: u32 = 4096;
 const PENDING: u32 = u32::MAX;
 
 /// Lifts every defined function in `bytes` to its static register schedule.
-pub(crate) fn lift_bytes(bytes: &[u8]) -> Result<Vec<LiftedFunction>> {
+pub(crate) fn lift_functions(bytes: &[u8]) -> Result<Vec<LiftedFunction>> {
     let info = ModuleInfo::parse(bytes)?;
     info.bodies
         .iter()
@@ -341,7 +341,7 @@ impl<'a> Lifter<'a> {
         (0..n).for_each(|_| self.pop_one());
     }
 
-    /// Marks the current frame unreachable, resetting the height to its floor --
+    /// Marks the current frame unreachable, resetting the height to its floor---
     /// the WASM validation algorithm's treatment of code after an unconditional
     /// branch, `return`, or `unreachable`.
     fn mark_unreachable(&mut self) {

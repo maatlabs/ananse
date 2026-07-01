@@ -69,18 +69,19 @@ The current `crates/ananse/` package contains the v0.1.0 runtime: a `nom`-based 
 
 The foundational ZK release replaces this implementation crate-by-crate. The target workspace shape is:
 
-```txt
-crates/
-|-- ananse/              # binary + thin glue; depends on every workspace crate
-|-- ananse_decoder/      # wasmparser-backed module validator + WASM rejection rules
-|-- ananse_lift/         # static stack-to-register lift; depth-indexed register schedule
-|-- ananse_executor/     # schedule-driven interpreter + StepObserver
-|-- ananse_trace/        # WASM-trace builder + access-log preprocessing
-|-- ananse_air/          # winter-air::Air for the WASM integer subset
-|-- ananse_prover/       # winter-prover wrapper + Receipt type
-+-- ananse_wasi/         # minimal deterministic wasi_snapshot_preview1
-fixtures/                # WAT/WASM fixture pool, consumed by the tests crate
-tests/                   # `ananse_tests` workspace member: shared helpers + integration tests
+```text
+ananse/
+├── crates/
+│   ├── ananse/              # binary + thin glue; depends on every workspace crate
+│   ├── ananse_decoder/      # wasmparser-backed module validator + WASM rejection rules
+│   ├── ananse_lift/         # static stack-to-register lift; depth-indexed register schedule
+│   ├── ananse_executor/     # schedule-driven interpreter + StepObserver
+│   ├── ananse_trace/        # WASM-trace builder + access-log preprocessing
+│   ├── ananse_air/          # winter-air::Air for the WASM integer subset
+│   ├── ananse_prover/       # winter-prover wrapper + Receipt type
+│   └── ananse_wasi/         # minimal deterministic wasi_snapshot_preview1
+├── fixtures/                # WAT/WASM fixture pool, consumed by the tests crate
+└── tests/                   # `ananse_tests` workspace member: shared helpers + integration tests
 ```
 
 ## Contributing
