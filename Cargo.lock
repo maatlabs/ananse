@@ -50,9 +50,20 @@ dependencies = [
  "ananse_decoder",
  "ananse_executor",
  "ananse_lift",
+ "ananse_trace",
  "maat_field",
  "wasmparser",
  "wat",
+]
+
+[[package]]
+name = "ananse_trace"
+version = "0.2.0"
+dependencies = [
+ "ananse_executor",
+ "ananse_lift",
+ "maat_field",
+ "thiserror",
 ]
 
 [[package]]

@@ -1,68 +1,10 @@
-use ananse_decoder::{ImportEntry, Module};
+use ananse_decoder::Module;
 use ananse_executor::{
-    Entry, ExecuteError, Host, HostAction, MemAccess, NoHost, OpCode, StepRecord, Trap, Word,
-    execute,
+    Entry, ExecuteError, MemAccess, NoHost, OpCode, StepRecord, Trap, Word, execute,
 };
 use ananse_lift::{Register, lift};
-use ananse_tests::{WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
+use ananse_tests::{TestHost, WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
 use maat_field::Felt;
-
-/// A deterministic host realizing the two WASI imports Ananse admits: `fd_write`
-/// appends each io-vector's bytes to a journal and reports the count written;
-/// `proc_exit` halts with its status code.
-#[derive(Default)]
-struct TestHost {
-    journal: Vec<u8>,
-}
-
-impl Host for TestHost {
-    fn call(
-        &mut self,
-        import: &ImportEntry,
-        args: &[Word],
-        memory: &mut [u8],
-    ) -> Result<HostAction, ExecuteError> {
-        match import.name.as_str() {
-            "fd_write" => {
-                let iovs = as_u32(args[1]) as usize;
-                let count = as_u32(args[2]);
-                let nwritten = as_u32(args[3]) as usize;
-                let mut total: u32 = 0;
-                for i in 0..count {
-                    let base = iovs + (i as usize) * 8;
-                    let ptr = read_u32(memory, base) as usize;
-                    let len = read_u32(memory, base + 4);
-                    self.journal
-                        .extend_from_slice(&memory[ptr..ptr + len as usize]);
-                    total += len;
-                }
-                write_u32(memory, nwritten, total);
-                Ok(HostAction::Return(vec![Word::I32(0)]))
-            }
-            "proc_exit" => Ok(HostAction::Exit(as_u32(args[0]) as i32)),
-            _ => Err(ExecuteError::Host {
-                module: import.module.clone(),
-                name: import.name.clone(),
-                message: "unexpected import".into(),
-            }),
-        }
-    }
-}
-
-fn as_u32(word: Word) -> u32 {
-    match word {
-        Word::I32(v) => v,
-        Word::I64(v) => v as u32,
-    }
-}
-
-fn read_u32(memory: &[u8], at: usize) -> u32 {
-    u32::from_le_bytes([memory[at], memory[at + 1], memory[at + 2], memory[at + 3]])
-}
-
-fn write_u32(memory: &mut [u8], at: usize, value: u32) {
-    memory[at..at + 4].copy_from_slice(&value.to_le_bytes());
-}
 
 /// Runs a module from its automatic entry point, collecting the record stream.
 fn records(bytes: &[u8]) -> Vec<StepRecord> {

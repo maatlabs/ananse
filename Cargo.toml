@@ -5,6 +5,7 @@ members = [
     "crates/ananse_decoder",
     "crates/ananse_lift",
     "crates/ananse_executor",
+    "crates/ananse_trace",
     "tests",
 ]
 default-members = ["crates/ananse"]
@@ -22,6 +23,7 @@ readme = "README.md"
 ananse_decoder = { path = "crates/ananse_decoder", version = "0.2.0" }
 ananse_lift = { path = "crates/ananse_lift", version = "0.2.0" }
 ananse_executor = { path = "crates/ananse_executor", version = "0.2.0" }
+ananse_trace = { path = "crates/ananse_trace", version = "0.2.0" }
 
 maat_field = "0.19.0"
 anyhow = "1"

@@ -1,0 +1,19 @@
+[package]
+name = "ananse_trace"
+description = "Register-column execution trace and linear-memory access log for the Ananse zkVM"
+keywords = ["wasm", "zero-knowledge", "zk", "zkvm"]
+categories = ["compilers", "cryptography", "wasm"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+ananse_lift = { workspace = true }
+ananse_executor = { workspace = true }
+
+maat_field = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
