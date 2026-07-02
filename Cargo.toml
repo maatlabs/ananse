@@ -28,6 +28,7 @@ ananse_trace = { path = "crates/ananse_trace", version = "0.2.0" }
 ananse_air = { path = "crates/ananse_air", version = "0.2.0" }
 
 maat_field = "0.19.0"
+maat_air = "0.19.0"
 anyhow = "1"
 nom = "7"
 nom-leb128 = "0.2"

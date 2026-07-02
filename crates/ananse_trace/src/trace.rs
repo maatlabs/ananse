@@ -1,21 +1,29 @@
-//! The register-column trace: the executor -> prover artifact.
+//! The unified access-log trace: the executor -> prover artifact.
+//!
+//! Every operator's effect on the machine is a sequence of reads and writes over
+//! one flat address space that holds the operand stack, locals, globals, and linear
+//! memory alike. The trace records those accesses on a fixed-width value bus in
+//! execution order and, alongside, the same accesses sorted by address then time.
+//! Proving the two are a permutation of one another, and that the sorted view is
+//! internally consistent (every read returns the value the previous access to its
+//! address left), is the single argument that ties the whole machine together.
 
-use ananse_executor::{StepRecord, Transition};
-use ananse_lift::{LiftedFunction, LiftedProgram, Register};
+use ananse_executor::{RegAccess, StepRecord, Transition};
+use ananse_lift::{LiftedFunction, LiftedProgram, Register, Successors};
 use maat_field::{Felt, FieldElement};
 
 use crate::layout::{
-    COL_MEM_ADDR, COL_MEM_IS_WRITE, COL_MEM_VAL_HI, COL_MEM_VAL_LO, COL_PC, SELECTOR_BASE,
-    register_limb_columns, trace_width,
+    self, BUS_SLOTS, COL_CLK, COL_HEIGHT, COL_IMM, COL_PC, REGISTER_REGION, SELECTOR_BASE,
+    bus_slot, slot, sorted, sorted_slot,
 };
-use crate::memory::{self, MemoryAccess};
 use crate::selector::{SEL_PADDING, opcode_index};
 use crate::{Result, TraceError};
 
 /// Winterfell's minimum trace length.
 const MIN_TRACE_ROWS: usize = 8;
 
-/// Register-file dimensions of the executing frame.
+/// Register-file dimensions of the executing frame, used to resolve a register
+/// operand to its address in the unified space.
 #[derive(Clone, Copy)]
 struct ExecFrame {
     locals: usize,
@@ -33,16 +41,25 @@ impl ExecFrame {
     }
 }
 
-/// A register-shaped execution trace: the append-only record stream paired with
-/// the column-major field matrix the STARK prover commits to.
+/// One access on the unified log: an address, the timestamp at which it happened,
+/// the accessed value's two limbs, and whether it was a write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Access {
+    address: u64,
+    timestamp: u64,
+    lo: Felt,
+    hi: Felt,
+    is_write: bool,
+}
+
+/// A register-shaped execution trace: the append-only record stream paired with the
+/// column-major field matrix the STARK prover commits to.
 #[derive(Debug, Clone)]
 pub struct Trace {
     records: Vec<StepRecord>,
     columns: Vec<Vec<Felt>>,
-    access_log: Vec<MemoryAccess>,
-    register_width: usize,
-    locals_count: usize,
-    globals_count: usize,
+    locals: u32,
+    globals: u32,
     steps: usize,
     length: usize,
 }
@@ -69,19 +86,29 @@ impl Trace {
             .ok_or(TraceError::InconsistentSchedule { func_index })?;
         let exec_frame = ExecFrame::of(func);
 
-        let initial = initial_register_file(&records, exec_frame)?;
-        let (columns, steps, length) = build_columns(&records, exec_frame, initial)?;
+        let accesses = access_stream(&records, exec_frame)?;
+        validate(&accesses)?;
 
-        let access_log = memory::access_log(&records);
-        memory::validate(&access_log)?;
+        let halt_pc = func.instrs.len() as u32;
+        let heights = func
+            .instrs
+            .iter()
+            .map(|instr| instr.height_in)
+            .collect::<Vec<_>>();
+        let (columns, steps, length) = build_columns(
+            &records,
+            exec_frame,
+            &accesses,
+            &heights,
+            halt_pc,
+            edge_count(func),
+        )?;
 
         Ok(Self {
             records,
             columns,
-            access_log,
-            register_width: exec_frame.width,
-            locals_count: exec_frame.locals,
-            globals_count: exec_frame.globals,
+            locals: func.locals_count,
+            globals: func.globals_count,
             steps,
             length,
         })
@@ -103,13 +130,7 @@ impl Trace {
         self.columns.get(index).map(Vec::as_slice)
     }
 
-    /// The address-sorted linear-memory access log the prover permutes against
-    /// the execution-order memory columns.
-    pub fn access_log(&self) -> &[MemoryAccess] {
-        &self.access_log
-    }
-
-    /// Number of columns in the trace, `trace_width(register_width)`.
+    /// Number of columns in the trace, [`layout::main_width`].
     pub fn width(&self) -> usize {
         self.columns.len()
     }
@@ -124,82 +145,90 @@ impl Trace {
         self.steps
     }
 
-    /// Width of the register bank, `locals + globals + max operand-stack height`.
-    pub fn register_width(&self) -> usize {
-        self.register_width
+    /// Number of local slots in the traced frame (parameters plus declared locals).
+    pub fn locals(&self) -> u32 {
+        self.locals
     }
 
-    /// The `(lo, hi)` limb columns holding `register`, or `None` if it is outside
-    /// this frame's register file.
-    pub fn register_columns(&self, register: Register) -> Option<(usize, usize)> {
-        let exec_frame = ExecFrame {
-            locals: self.locals_count,
-            globals: self.globals_count,
-            width: self.register_width,
-        };
-        resolve_register(register, exec_frame)
-            .ok()
-            .map(register_limb_columns)
+    /// Register-file offset at which the operand stack begins: the locals followed by the globals.
+    pub fn stack_base(&self) -> u32 {
+        self.locals.saturating_add(self.globals)
     }
 }
 
-/// Materializes the column-major matrix, simulating the register file forward and
-/// cross-checking every read against the reconstructed value.
-fn build_columns(
-    records: &[StepRecord],
-    exec_frame: ExecFrame,
-    mut regfile: Vec<(Felt, Felt)>,
-) -> Result<(Vec<Vec<Felt>>, usize, usize)> {
-    let steps = records.len();
-    let length = steps.max(MIN_TRACE_ROWS).next_power_of_two();
-    let width = trace_width(exec_frame.width);
-    let mut columns = vec![vec![Felt::ZERO; length]; width];
-
-    for (row, record) in records.iter().enumerate() {
-        columns[COL_PC][row] = Felt::new(u64::from(record.pc));
-        columns[SELECTOR_BASE + opcode_index(record.opcode)][row] = Felt::ONE;
-        for (offset, &(lo, hi)) in regfile.iter().enumerate() {
-            let (lo_col, hi_col) = register_limb_columns(offset);
-            columns[lo_col][row] = lo;
-            columns[hi_col][row] = hi;
-        }
-        for read in &record.reads {
-            let offset = resolve_register(read.reg, exec_frame)?;
-            if regfile[offset] != read.value.to_limbs() {
-                return Err(TraceError::RegisterInconsistency {
-                    step: row,
-                    register: read.reg,
-                });
-            }
-        }
-        if let Some(access) = record.memory.first() {
-            columns[COL_MEM_ADDR][row] = Felt::new(access.address);
-            columns[COL_MEM_VAL_LO][row] = Felt::new(access.value & 0xFFFF_FFFF);
-            columns[COL_MEM_VAL_HI][row] = Felt::new(access.value >> 32);
-            columns[COL_MEM_IS_WRITE][row] = if access.store { Felt::ONE } else { Felt::ZERO };
-        }
-        for write in &record.writes {
-            let offset = resolve_register(write.reg, exec_frame)?;
-            regfile[offset] = write.value.to_limbs();
-        }
-    }
-
-    // Padding rows hold the final register file and the last program counter, and
-    // one-hot the padding selector so the halt state persists across the tail.
-    let last_pc = records.last().map_or(0, |record| record.pc);
-    columns[COL_PC][steps..].fill(Felt::new(u64::from(last_pc)));
-    columns[SELECTOR_BASE + SEL_PADDING][steps..].fill(Felt::ONE);
-    for (offset, &(lo, hi)) in regfile.iter().enumerate() {
-        let (lo_col, hi_col) = register_limb_columns(offset);
-        columns[lo_col][steps..].fill(lo);
-        columns[hi_col][steps..].fill(hi);
-    }
-
-    Ok((columns, steps, length))
+/// Flattens the record stream into the unified access log in execution order.
+fn access_stream(records: &[StepRecord], exec_frame: ExecFrame) -> Result<Vec<Access>> {
+    records
+        .iter()
+        .enumerate()
+        .map(|(step, record)| row_accesses(step, record, exec_frame))
+        .collect::<Result<Vec<_>>>()
+        .map(|rows| rows.into_iter().flatten().collect())
 }
 
-/// Resolves a register operand to its offset within the register bank, mirroring
-/// the lift's three-bank layout: locals, then globals, then the operand stack.
+/// The accesses one operator performs, in canonical bus order, each carrying its
+/// `step * BUS_SLOTS + slot` timestamp. Fails if the operator performs more accesses
+/// than the bus has slots.
+fn row_accesses(step: usize, record: &StepRecord, exec_frame: ExecFrame) -> Result<Vec<Access>> {
+    let reg = |a: &RegAccess, is_write: bool| -> Result<Access> {
+        let (lo, hi) = a.value.to_limbs();
+        Ok(Access {
+            address: register_address(a.reg, exec_frame)?,
+            timestamp: 0,
+            lo,
+            hi,
+            is_write,
+        })
+    };
+    let reads = record.reads.iter().map(|a| reg(a, false));
+    let mem = record.memory.iter().map(|m| {
+        Ok(Access {
+            address: m.address,
+            timestamp: 0,
+            lo: Felt::new(m.value & 0xFFFF_FFFF),
+            hi: Felt::new(m.value >> 32),
+            is_write: m.store,
+        })
+    });
+    let writes = record.writes.iter().map(|a| reg(a, true));
+
+    let mut accesses = reads.chain(mem).chain(writes).collect::<Result<Vec<_>>>()?;
+    if accesses.len() > BUS_SLOTS {
+        return Err(TraceError::AccessOverflow {
+            step,
+            count: accesses.len(),
+        });
+    }
+    let base = (step * BUS_SLOTS) as u64;
+    for (slot, access) in accesses.iter_mut().enumerate() {
+        access.timestamp = base + slot as u64;
+    }
+    Ok(accesses)
+}
+
+/// The address of a register operand in the unified space: its offset within the
+/// frame's three-bank register file, lifted above the linear-memory range so it
+/// cannot alias a byte address.
+fn register_address(register: Register, exec_frame: ExecFrame) -> Result<u64> {
+    let offset = resolve_register(register, exec_frame)?;
+    Ok(REGISTER_REGION + offset as u64)
+}
+
+/// The register-file offset of the local or global slot an operator touches, or
+/// zero for operators that touch none.
+fn immediate_offset(record: &StepRecord, exec_frame: ExecFrame) -> Result<u64> {
+    record
+        .reads
+        .iter()
+        .chain(&record.writes)
+        .find(|a| matches!(a.reg, Register::Local(_) | Register::Global(_)))
+        .map(|a| resolve_register(a.reg, exec_frame).map(|offset| offset as u64))
+        .transpose()
+        .map(|offset| offset.unwrap_or(0))
+}
+
+/// Resolves a register operand to its offset within the register bank, mirroring the
+/// lift's three-bank layout: locals, then globals, then the operand stack.
 fn resolve_register(register: Register, exec_frame: ExecFrame) -> Result<usize> {
     let offset = match register {
         Register::Local(index) => Some(index as usize),
@@ -217,28 +246,123 @@ fn resolve_register(register: Register, exec_frame: ExecFrame) -> Result<usize> 
         })
 }
 
-/// Recovers the register file entering the first step: a register's value before
-/// its first write is the value its first pre-write read observed (else zero, an
-/// unconstrained slot the AIR never reads).
-fn initial_register_file(
-    records: &[StepRecord],
-    exec_frame: ExecFrame,
-) -> Result<Vec<(Felt, Felt)>> {
-    let mut initial = vec![(Felt::ZERO, Felt::ZERO); exec_frame.width];
-    let mut written = vec![false; exec_frame.width];
-    let mut known = vec![false; exec_frame.width];
-    for record in records {
-        for read in &record.reads {
-            let offset = resolve_register(read.reg, exec_frame)?;
-            if !written[offset] && !known[offset] {
-                initial[offset] = read.value.to_limbs();
-                known[offset] = true;
-            }
-        }
-        for write in &record.writes {
-            let offset = resolve_register(write.reg, exec_frame)?;
-            written[offset] = true;
+/// Verifies read-consistency over the unified log.
+fn validate(accesses: &[Access]) -> Result<()> {
+    let mut sorted = accesses.to_vec();
+    sorted.sort_by_key(|a| (a.address, a.timestamp));
+    for pair in sorted.windows(2) {
+        let (prev, cur) = (pair[0], pair[1]);
+        if cur.address == prev.address && !cur.is_write && (cur.lo, cur.hi) != (prev.lo, prev.hi) {
+            return Err(TraceError::AccessInconsistent {
+                address: cur.address,
+                step: (cur.timestamp / BUS_SLOTS as u64) as usize,
+            });
         }
     }
-    Ok(initial)
+    Ok(())
+}
+
+/// Materializes the column-major matrix: the execution-order value bus, the
+/// address-sorted access log, and the control columns and selectors.
+fn build_columns(
+    records: &[StepRecord],
+    exec_frame: ExecFrame,
+    accesses: &[Access],
+    heights: &[u32],
+    halt_pc: u32,
+    edge_count: usize,
+) -> Result<(Vec<Vec<Felt>>, usize, usize)> {
+    let steps = records.len();
+    let length = steps
+        .max(edge_count)
+        .saturating_add(1)
+        .max(MIN_TRACE_ROWS)
+        .next_power_of_two();
+    let mut columns = vec![vec![Felt::ZERO; length]; layout::main_width()];
+
+    for (row, record) in records.iter().enumerate() {
+        let height =
+            heights
+                .get(record.pc as usize)
+                .copied()
+                .ok_or(TraceError::InconsistentSchedule {
+                    func_index: record.func_index,
+                })?;
+        columns[COL_PC][row] = Felt::new(u64::from(record.pc));
+        columns[COL_CLK][row] = Felt::new(row as u64);
+        columns[COL_HEIGHT][row] = Felt::new(u64::from(height));
+        columns[COL_IMM][row] = Felt::new(immediate_offset(record, exec_frame)?);
+        columns[SELECTOR_BASE + opcode_index(record.opcode)][row] = Felt::ONE;
+        for (index, access) in row_accesses(row, record, exec_frame)?
+            .into_iter()
+            .enumerate()
+        {
+            write_bus_slot(&mut columns, bus_slot(index), row, access);
+        }
+    }
+
+    columns[COL_PC][steps..].fill(Felt::new(u64::from(halt_pc)));
+    columns[SELECTOR_BASE + SEL_PADDING][steps..].fill(Felt::ONE);
+    for (offset, clock) in columns[COL_CLK][steps..].iter_mut().enumerate() {
+        *clock = Felt::new((steps + offset) as u64);
+    }
+
+    fill_sorted_log(&mut columns, accesses);
+
+    Ok((columns, steps, length))
+}
+
+/// Writes one access onto its value-bus slot.
+fn write_bus_slot(columns: &mut [Vec<Felt>], base: usize, row: usize, access: Access) {
+    columns[base + slot::ADDR][row] = Felt::new(access.address);
+    columns[base + slot::LO][row] = access.lo;
+    columns[base + slot::HI][row] = access.hi;
+    columns[base + slot::IS_WRITE][row] = boolean(access.is_write);
+    columns[base + slot::ACTIVE][row] = Felt::ONE;
+}
+
+/// Lays the address-sorted access log across the trace, [`BUS_SLOTS`] entries per row.
+fn fill_sorted_log(columns: &mut [Vec<Felt>], accesses: &[Access]) {
+    let mut sorted = accesses.to_vec();
+    sorted.sort_by_key(|a| (a.address, a.timestamp));
+
+    let mut previous: Option<u64> = None;
+    for (position, access) in sorted.iter().enumerate() {
+        let (row, slot_index) = (position / BUS_SLOTS, position % BUS_SLOTS);
+        let base = sorted_slot(slot_index);
+        columns[base + sorted::ADDR][row] = Felt::new(access.address);
+        columns[base + sorted::TS][row] = Felt::new(access.timestamp);
+        columns[base + sorted::LO][row] = access.lo;
+        columns[base + sorted::HI][row] = access.hi;
+        columns[base + sorted::IS_WRITE][row] = boolean(access.is_write);
+        columns[base + sorted::ACTIVE][row] = Felt::ONE;
+        columns[base + sorted::SAME_ADDR][row] = boolean(previous == Some(access.address));
+        previous = Some(access.address);
+    }
+}
+
+/// A Boolean value; One if `flag`, zero otherwise.
+fn boolean(flag: bool) -> Felt {
+    if flag { Felt::ONE } else { Felt::ZERO }
+}
+
+/// An upper bound on the program ROM's edge count: one edge per successor target at
+/// every program point, one extra per point for a possible call-to-halt edge, and
+/// the halt self-loop.
+fn edge_count(function: &LiftedFunction) -> usize {
+    let targets = function
+        .instrs
+        .iter()
+        .map(|sched| match &sched.successors {
+            Successors::Fallthrough
+            | Successors::Jump(_)
+            | Successors::Return
+            | Successors::Trap => 1,
+            Successors::Branch { .. } => 2,
+            Successors::Table { targets, .. } => targets.len().saturating_add(1),
+        })
+        .sum::<usize>();
+    targets
+        .saturating_add(function.instrs.len())
+        .saturating_add(1)
 }

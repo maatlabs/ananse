@@ -21,7 +21,7 @@ pub enum TraceError {
         func_index: u32,
     },
 
-    /// A register operand resolves to a column outside the function's register
+    /// A register operand resolves to an offset outside the function's register
     /// file. Indicates a lift/execution disagreement on the register-file width.
     #[error("register {register:?} lies outside the register file of width {width}")]
     RegisterOutOfRange {
@@ -31,20 +31,23 @@ pub enum TraceError {
         width: usize,
     },
 
-    /// A read observed a register value that disagrees with the value the trace
-    /// reconstructed for that column at that step.
-    #[error("register {register:?} read at step {step} disagrees with the reconstructed value")]
-    RegisterInconsistency {
-        /// The step (row index) of the disagreeing read.
+    /// A single operator performed more accesses than the value bus has slots.
+    /// Every operator in Ananse's integer subset fits, so this signals a lift or
+    /// executor defect rather than an input the bus is too narrow for.
+    #[error("operator at step {step} performed {count} accesses, more than the value bus holds")]
+    AccessOverflow {
+        /// The step (row index) of the offending operator.
         step: usize,
-        /// The register whose reconstructed value the read contradicts.
-        register: Register,
+        /// The number of accesses the operator performed.
+        count: usize,
     },
 
-    /// A linear-memory read returned a value that disagrees with the most recent
-    /// write to its address, breaking the access log's read-consistency.
-    #[error("linear-memory read at step {step} disagrees with the last write to address {address}")]
-    MemoryInconsistent {
+    /// A read returned a value that disagrees with the most recent write to its
+    /// address, breaking the unified access log's read-consistency. Covers operand
+    /// stack, locals, globals, and linear memory alike, since one log serves them
+    /// all.
+    #[error("read at step {step} disagrees with the last write to address {address}")]
+    AccessInconsistent {
         /// The address whose read-consistency failed.
         address: u64,
         /// The step (row index) of the disagreeing read.

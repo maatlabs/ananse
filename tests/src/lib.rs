@@ -3,11 +3,12 @@
 use std::path::{Path, PathBuf};
 
 use ananse_air::{
-    Air, AnanseAir, AnansePublicInputs, BatchingMethod, EvaluationFrame, FieldExtension,
-    NUM_TRANSITION_CONSTRAINTS, ProofOptions, TraceInfo,
+    AUX_WIDTH, Air, AnanseAir, AnansePublicInputs, AuxRandElements, BatchingMethod,
+    EvaluationFrame, FieldExtension, NUM_AUX_CONSTRAINTS, NUM_AUX_RANDS, ProofOptions, TraceInfo,
+    build_aux_columns, periodic_table, program_rom,
 };
 use ananse_decoder::{ImportEntry, Module};
-use ananse_executor::{Entry, ExecuteError, Host, HostAction, Word, execute};
+use ananse_executor::{Entry, ExecuteError, Host, HostAction, Word, execute, function_opcodes};
 use ananse_lift::lift;
 use ananse_trace::Trace;
 use maat_field::{Felt, FieldElement};
@@ -70,7 +71,10 @@ pub const WAT_SNIPPETS: &[(&str, &str)] = &[
 pub const FIXTURES_DIR: &str = "../fixtures";
 
 /// Single-frame fixtures that execute from their automatic entry point and stay
-/// within one call frame (no defined-function calls).
+/// within one call frame, performing only register and linear-memory accesses that
+/// fit the value bus. `hello_world.wat` is excluded: its `fd_write` host call reads
+/// four arguments and writes one result in a single operator, a variable-arity host
+/// boundary handled alongside the call/return model rather than the register core.
 pub const SINGLE_FRAME_FIXTURES: &[&str] = &[
     "i32_const.wat",
     "func_add.wat",
@@ -79,7 +83,6 @@ pub const SINGLE_FRAME_FIXTURES: &[&str] = &[
     "func_local.wat",
     "local_set.wat",
     "i32_store.wat",
-    "hello_world.wat",
 ];
 
 /// Decodes, lifts, executes from the automatic entry point, and builds the trace.
@@ -90,6 +93,54 @@ pub fn trace_of(bytes: &[u8]) -> Trace {
     let mut records = Vec::new();
     execute(&module, &Entry::Auto, &[], &mut host, &mut records).expect("execute");
     Trace::build(&program, records).expect("build")
+}
+
+/// Decodes, lifts, executes, and builds both the trace and the packed program ROM
+/// the control-flow lookup binds against---the pair the two-segment AIR needs.
+pub fn trace_and_rom(bytes: &[u8]) -> (Trace, Vec<Felt>) {
+    let module = Module::decode(bytes).expect("decode");
+    let program = lift(&module).expect("lift");
+    let mut host = TestHost::default();
+    let mut records = Vec::new();
+    execute(&module, &Entry::Auto, &[], &mut host, &mut records).expect("execute");
+    let func_index = records
+        .first()
+        .expect("execution produces records")
+        .func_index;
+    let function = program
+        .functions
+        .iter()
+        .find(|f| f.func_index == func_index)
+        .expect("executed function was lifted");
+    let opcodes = function_opcodes(&module, func_index).expect("opcodes");
+    let rom = program_rom(&opcodes, function).expect("program ROM");
+    let trace = Trace::build(&program, records).expect("build");
+    (trace, rom)
+}
+
+/// Decodes, lifts, executes from an explicit entry point with explicit arguments,
+/// and builds both the trace and the packed program ROM. The `entry`/`args` form
+/// lets a test drive concrete operand values through an opcode the automatic entry
+/// point would otherwise run with zero-filled locals.
+pub fn trace_and_rom_entry(bytes: &[u8], entry: &Entry, args: &[Word]) -> (Trace, Vec<Felt>) {
+    let module = Module::decode(bytes).expect("decode");
+    let program = lift(&module).expect("lift");
+    let mut host = TestHost::default();
+    let mut records = Vec::new();
+    execute(&module, entry, args, &mut host, &mut records).expect("execute");
+    let func_index = records
+        .first()
+        .expect("execution produces records")
+        .func_index;
+    let function = program
+        .functions
+        .iter()
+        .find(|f| f.func_index == func_index)
+        .expect("executed function was lifted");
+    let opcodes = function_opcodes(&module, func_index).expect("opcodes");
+    let rom = program_rom(&opcodes, function).expect("program ROM");
+    let trace = Trace::build(&program, records).expect("build");
+    (trace, rom)
 }
 
 /// A deterministic host realizing the two WASI imports Ananse admits: `fd_write`
@@ -172,10 +223,16 @@ pub fn wat_from_str(wat: &str) -> Vec<u8> {
     wat::parse_str(wat).expect("WAT assembles to WASM")
 }
 
-/// Builds the register-shaped AIR for `trace` with development-grade proof
-/// options, ready for direct constraint evaluation.
-pub fn air_for(trace: &Trace) -> AnanseAir {
-    let trace_info = TraceInfo::new(trace.width(), trace.length());
+/// Builds the two-segment register-shaped AIR for `trace` and its program ROM with
+/// development-grade proof options, ready for direct constraint evaluation.
+pub fn air_for(trace: &Trace, program: Vec<Felt>) -> AnanseAir {
+    let trace_info = TraceInfo::new_multi_segment(
+        trace.width(),
+        AUX_WIDTH,
+        NUM_AUX_RANDS,
+        trace.length(),
+        vec![],
+    );
     let options = ProofOptions::new(
         27,
         8,
@@ -186,7 +243,67 @@ pub fn air_for(trace: &Trace) -> AnanseAir {
         BatchingMethod::Algebraic,
         BatchingMethod::Algebraic,
     );
-    AnanseAir::new(trace_info, AnansePublicInputs, options)
+    AnanseAir::new(
+        trace_info,
+        AnansePublicInputs::new(program, trace.stack_base()),
+        options,
+    )
+}
+
+/// Builds the auxiliary LogUp columns for `main_columns` against `rom` under the
+/// mock challenge `alpha`, then evaluates the auxiliary transition constraint on
+/// every row, returning the rows whose residual does not vanish.
+pub fn aux_violations(
+    air: &AnanseAir,
+    main_columns: &[Vec<Felt>],
+    rom: &[Felt],
+    length: usize,
+    alpha: Felt,
+) -> Vec<usize> {
+    let aux = build_aux_columns(main_columns, rom, length, alpha).expect("aux columns");
+    let table = periodic_table(rom, length);
+    aux_residuals(air, main_columns, &aux, &table, length, alpha)
+}
+
+/// Evaluates the auxiliary transition constraint on every row against explicitly
+/// supplied auxiliary `aux_columns` and periodic `table`, returning the rows whose
+/// residual does not vanish. Pairing honest auxiliary columns with a forged main
+/// trace is how a lookup tamper is caught: the edge recomputed from the main trace
+/// stops matching the committed grand sum.
+pub fn aux_residuals(
+    air: &AnanseAir,
+    main_columns: &[Vec<Felt>],
+    aux_columns: &[Vec<Felt>],
+    table: &[Felt],
+    length: usize,
+    alpha: Felt,
+) -> Vec<usize> {
+    let rands = AuxRandElements::new(vec![alpha]);
+    (0..length.saturating_sub(1))
+        .filter(|&row| {
+            let main_current = main_columns.iter().map(|c| c[row]).collect::<Vec<Felt>>();
+            let main_next = main_columns
+                .iter()
+                .map(|c| c[row + 1])
+                .collect::<Vec<Felt>>();
+            let aux_current = aux_columns.iter().map(|c| c[row]).collect::<Vec<Felt>>();
+            let aux_next = aux_columns
+                .iter()
+                .map(|c| c[row + 1])
+                .collect::<Vec<Felt>>();
+            let main_frame = EvaluationFrame::from_rows(main_current, main_next);
+            let aux_frame = EvaluationFrame::from_rows(aux_current, aux_next);
+            let mut result = vec![Felt::ZERO; NUM_AUX_CONSTRAINTS];
+            air.evaluate_aux_transition(
+                &main_frame,
+                &aux_frame,
+                &[table[row]],
+                &rands,
+                &mut result,
+            );
+            result[0] != Felt::ZERO
+        })
+        .collect()
 }
 
 /// Evaluates every transition constraint of `air` across the column-major
@@ -211,7 +328,7 @@ pub fn transition_violations(
                 .map(|column| column[row + 1])
                 .collect::<Vec<Felt>>();
             let frame = EvaluationFrame::from_rows(current, next);
-            let mut result = vec![Felt::ZERO; NUM_TRANSITION_CONSTRAINTS];
+            let mut result = vec![Felt::ZERO; air.num_main_transition_constraints()];
             air.evaluate_transition(&frame, &[], &mut result);
             result
                 .into_iter()

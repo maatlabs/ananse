@@ -1,6 +1,7 @@
 use ananse_decoder::Module;
 use ananse_executor::{
     Entry, ExecuteError, MemAccess, NoHost, OpCode, StepRecord, Trap, Word, execute,
+    function_opcodes,
 };
 use ananse_lift::{Register, lift};
 use ananse_tests::{TestHost, WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
@@ -79,6 +80,47 @@ fn records_agree_with_lift_schedule() {
         }
     }
     assert!(checked > 0, "no records were cross-checked");
+}
+
+/// Classifies every function body statically and confirms each executed record's
+/// opcode matches the static classification.
+fn assert_static_opcodes_match_records(name: &str, bytes: &[u8], checked: &mut usize) {
+    let module = Module::decode(bytes).expect("decode");
+    let bodies: Vec<(u32, Vec<OpCode>)> = lift(&module)
+        .expect("lift")
+        .functions
+        .iter()
+        .map(|f| {
+            (
+                f.func_index,
+                function_opcodes(&module, f.func_index).expect("classify body"),
+            )
+        })
+        .collect();
+    for record in records(bytes) {
+        let (_, body) = bodies
+            .iter()
+            .find(|(idx, _)| *idx == record.func_index)
+            .expect("executed function classified");
+        assert_eq!(
+            body[record.pc as usize], record.opcode,
+            "{name} fn{} pc{}: opcode",
+            record.func_index, record.pc
+        );
+        *checked += 1;
+    }
+}
+
+#[test]
+fn function_opcodes_agree_with_executed_records() {
+    let mut checked = 0usize;
+    for name in WAT_FILES {
+        assert_static_opcodes_match_records(name, &wat_from_file(name), &mut checked);
+    }
+    for (name, bytes) in completing_snippets() {
+        assert_static_opcodes_match_records(name, &bytes, &mut checked);
+    }
+    assert!(checked > 0, "no opcodes were cross-checked");
 }
 
 #[test]

@@ -12,7 +12,11 @@ homepage.workspace = true
 readme = "../../README.md"
 
 [dependencies]
+ananse_executor = { workspace = true }
+ananse_lift = { workspace = true }
 ananse_trace = { workspace = true }
 
+maat_air = { workspace = true }
 maat_field = { workspace = true }
+thiserror = { workspace = true }
 winter-air = { workspace = true }
