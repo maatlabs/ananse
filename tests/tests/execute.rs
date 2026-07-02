@@ -1,68 +1,11 @@
-use ananse_decoder::{ImportEntry, Module};
+use ananse_decoder::Module;
 use ananse_executor::{
-    Entry, ExecuteError, Host, HostAction, MemAccess, NoHost, OpCode, StepRecord, Trap, Word,
-    execute,
+    Entry, ExecuteError, MemAccess, NoHost, OpCode, StepRecord, Trap, Word, execute,
+    function_opcodes,
 };
-use ananse_lift::{Reg, lift};
-use ananse_tests::{WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
-use maat_field::Felt;
-
-/// A deterministic host realizing the two WASI imports Ananse admits: `fd_write`
-/// appends each io-vector's bytes to a journal and reports the count written;
-/// `proc_exit` halts with its status code.
-#[derive(Default)]
-struct TestHost {
-    journal: Vec<u8>,
-}
-
-impl Host for TestHost {
-    fn call(
-        &mut self,
-        import: &ImportEntry,
-        args: &[Word],
-        memory: &mut [u8],
-    ) -> Result<HostAction, ExecuteError> {
-        match import.name.as_str() {
-            "fd_write" => {
-                let iovs = as_u32(args[1]) as usize;
-                let count = as_u32(args[2]);
-                let nwritten = as_u32(args[3]) as usize;
-                let mut total: u32 = 0;
-                for i in 0..count {
-                    let base = iovs + (i as usize) * 8;
-                    let ptr = read_u32(memory, base) as usize;
-                    let len = read_u32(memory, base + 4);
-                    self.journal
-                        .extend_from_slice(&memory[ptr..ptr + len as usize]);
-                    total += len;
-                }
-                write_u32(memory, nwritten, total);
-                Ok(HostAction::Return(vec![Word::I32(0)]))
-            }
-            "proc_exit" => Ok(HostAction::Exit(as_u32(args[0]) as i32)),
-            _ => Err(ExecuteError::Host {
-                module: import.module.clone(),
-                name: import.name.clone(),
-                message: "unexpected import".into(),
-            }),
-        }
-    }
-}
-
-fn as_u32(word: Word) -> u32 {
-    match word {
-        Word::I32(v) => v,
-        Word::I64(v) => v as u32,
-    }
-}
-
-fn read_u32(memory: &[u8], at: usize) -> u32 {
-    u32::from_le_bytes([memory[at], memory[at + 1], memory[at + 2], memory[at + 3]])
-}
-
-fn write_u32(memory: &mut [u8], at: usize, value: u32) {
-    memory[at..at + 4].copy_from_slice(&value.to_le_bytes());
-}
+use ananse_lift::{Register, lift};
+use ananse_tests::{TestHost, WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
+use maat_field::{Felt, FieldElement};
 
 /// Runs a module from its automatic entry point, collecting the record stream.
 fn records(bytes: &[u8]) -> Vec<StepRecord> {
@@ -121,8 +64,8 @@ fn records_agree_with_lift_schedule() {
                 .find(|f| f.func_index == record.func_index)
                 .expect("executed function was lifted");
             let scheduled = &lifted.instrs[record.pc as usize];
-            let read_regs: Vec<Reg> = record.reads.iter().map(|r| r.reg).collect();
-            let write_regs: Vec<Reg> = record.writes.iter().map(|w| w.reg).collect();
+            let read_regs: Vec<Register> = record.reads.iter().map(|r| r.reg).collect();
+            let write_regs: Vec<Register> = record.writes.iter().map(|w| w.reg).collect();
             assert_eq!(
                 read_regs, scheduled.reads,
                 "{name} fn{} pc{}: read registers",
@@ -137,6 +80,47 @@ fn records_agree_with_lift_schedule() {
         }
     }
     assert!(checked > 0, "no records were cross-checked");
+}
+
+/// Classifies every function body statically and confirms each executed record's
+/// opcode matches the static classification.
+fn assert_static_opcodes_match_records(name: &str, bytes: &[u8], checked: &mut usize) {
+    let module = Module::decode(bytes).expect("decode");
+    let bodies: Vec<(u32, Vec<OpCode>)> = lift(&module)
+        .expect("lift")
+        .functions
+        .iter()
+        .map(|f| {
+            (
+                f.func_index,
+                function_opcodes(&module, f.func_index).expect("classify body"),
+            )
+        })
+        .collect();
+    for record in records(bytes) {
+        let (_, body) = bodies
+            .iter()
+            .find(|(idx, _)| *idx == record.func_index)
+            .expect("executed function classified");
+        assert_eq!(
+            body[record.pc as usize], record.opcode,
+            "{name} fn{} pc{}: opcode",
+            record.func_index, record.pc
+        );
+        *checked += 1;
+    }
+}
+
+#[test]
+fn function_opcodes_agree_with_executed_records() {
+    let mut checked = 0usize;
+    for name in WAT_FILES {
+        assert_static_opcodes_match_records(name, &wat_from_file(name), &mut checked);
+    }
+    for (name, bytes) in completing_snippets() {
+        assert_static_opcodes_match_records(name, &bytes, &mut checked);
+    }
+    assert!(checked > 0, "no opcodes were cross-checked");
 }
 
 #[test]
@@ -256,14 +240,18 @@ fn unreachable_traps() {
 }
 
 #[test]
-fn field_encoding_uses_the_bit_pattern_residue() {
+fn field_encoding_splits_values_into_faithful_limbs() {
     let i32_neg = run_export(
         &wat_from_str("(module (func (export \"f\") (result i32) (i32.const -1)))"),
         "f",
         &[],
     );
     assert_eq!(i32_neg, vec![Word::I32(u32::MAX)]);
-    assert_eq!(i32_neg[0].to_felt(), Felt::new(u64::from(u32::MAX)));
+    // An `i32` occupies the low limb alone; the high limb is zero.
+    assert_eq!(
+        i32_neg[0].to_limbs(),
+        (Felt::new(u64::from(u32::MAX)), Felt::ZERO)
+    );
 
     let i64_neg = run_export(
         &wat_from_str("(module (func (export \"f\") (result i64) (i64.const -1)))"),
@@ -271,11 +259,17 @@ fn field_encoding_uses_the_bit_pattern_residue() {
         &[],
     );
     assert_eq!(i64_neg, vec![Word::I64(u64::MAX)]);
-    assert_eq!(i64_neg[0].to_felt(), Felt::new(u64::MAX));
+    // `i64` -1 (`0xFFFF_FFFF_FFFF_FFFF`) exceeds the Goldilocks prime, so a
+    // single residue would alias it to `0xFFFF_FFFE`. The two limbs preserve it
+    // in full: `0xFFFF_FFFF + 0xFFFF_FFFF * 2^32` reconstructs the true value.
+    assert_eq!(
+        i64_neg[0].to_limbs(),
+        (Felt::new(0xFFFF_FFFF), Felt::new(0xFFFF_FFFF))
+    );
 
-    // An `i32` and an `i64` of value -1 occupy distinct field residues: the
-    // `i32` carries its 32-bit pattern, the `i64` its reduced 64-bit pattern.
-    assert_ne!(i32_neg[0].to_felt(), i64_neg[0].to_felt());
+    // The high limb distinguishes the two: an `i32` -1 has a zero high limb, an
+    // `i64` -1 a saturated one.
+    assert_ne!(i32_neg[0].to_limbs().1, i64_neg[0].to_limbs().1);
 }
 
 #[test]

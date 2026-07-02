@@ -10,7 +10,7 @@
 //! WebAssembly validation already fixes a single operand-stack height at every
 //! reachable program point. The lift re-derives that height by abstract
 //! interpretation over the structured control flow and addresses the operand
-//! stack, locals, and globals as a single static register file (see [`Reg`]).
+//! stack, locals, and globals as a single static register file (see [`Register`]).
 //! Because register identity is positional and every predecessor of a control-flow
 //! join agrees on height, merges need no value muxing---only the next program
 //! point is data-dependent, surfaced through [`Successors`].
@@ -26,7 +26,7 @@ mod program;
 
 use ananse_decoder::Module;
 pub use error::LiftError;
-pub use program::{InstrSchedule, LiftedFunction, LiftedProgram, Reg, Successors};
+pub use program::{InstructionSchedule, LiftedFunction, LiftedProgram, Register, Successors};
 
 /// Result alias for lift operations.
 pub type Result<T> = core::result::Result<T, LiftError>;
@@ -39,6 +39,6 @@ pub type Result<T> = core::result::Result<T, LiftError>;
 /// subset of WASM rather than malformed user input.
 pub fn lift(module: &Module) -> Result<LiftedProgram> {
     Ok(LiftedProgram {
-        functions: analysis::lift_bytes(module.bytes())?,
+        functions: analysis::lift_functions(module.bytes())?,
     })
 }

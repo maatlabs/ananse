@@ -2,11 +2,10 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use wasmparser::{
-    BinaryReaderError, ExternalKind, Import, Imports, Parser, Payload, ValidPayload, Validator,
-    WasmFeatures,
+    ExternalKind, Import, Imports, Parser, Payload, ValidPayload, Validator, WasmFeatures,
 };
 
-use crate::{DecodeError, Result};
+use crate::{DecodeError, Result, error as decode_error};
 
 /// The only import module namespace Ananse permits.
 pub const WASI_MODULE: &str = "wasi_snapshot_preview1";
@@ -98,28 +97,17 @@ fn features() -> WasmFeatures {
     f
 }
 
-fn invalid_binary(e: BinaryReaderError) -> DecodeError {
-    DecodeError::InvalidBinary {
-        offset: e.offset(),
-        message: e.to_string(),
-    }
-}
-
-fn validation_failed(e: BinaryReaderError) -> DecodeError {
-    DecodeError::ValidationFailed {
-        offset: e.offset(),
-        message: e.to_string(),
-    }
-}
-
 fn validate_module(bytes: &[u8]) -> Result<()> {
     let mut validator = Validator::new_with_features(features());
     for payload in Parser::new(0).parse_all(bytes) {
-        let payload = payload.map_err(invalid_binary)?;
-        let valid = validator.payload(&payload).map_err(validation_failed)?;
+        let payload = payload.map_err(decode_error::invalid_binary)?;
+        let valid = validator
+            .payload(&payload)
+            .map_err(decode_error::validation_failed)?;
         if let ValidPayload::Func(func, body) = valid {
             let mut fv = func.into_validator(Default::default());
-            fv.validate(&body).map_err(validation_failed)?;
+            fv.validate(&body)
+                .map_err(decode_error::validation_failed)?;
         }
     }
     Ok(())
@@ -130,17 +118,17 @@ fn decode_internal(bytes: &[u8]) -> Result<Module> {
     let mut exports = Vec::new();
 
     for payload in Parser::new(0).parse_all(bytes) {
-        let payload = payload.map_err(invalid_binary)?;
+        let payload = payload.map_err(decode_error::invalid_binary)?;
         match payload {
             Payload::ImportSection(reader) => {
                 for group in reader {
-                    let group = group.map_err(invalid_binary)?;
+                    let group = group.map_err(decode_error::invalid_binary)?;
                     add_import_group(group, &mut imports)?;
                 }
             }
             Payload::ExportSection(reader) => {
                 for item in reader {
-                    let export = item.map_err(invalid_binary)?;
+                    let export = item.map_err(decode_error::invalid_binary)?;
                     if let Some(kind) = from_external_kind(export.kind) {
                         exports.push(ExportEntry {
                             name: export.name.to_string(),

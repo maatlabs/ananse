@@ -6,7 +6,8 @@ use wasmparser::{
 };
 
 use crate::{
-    InstrSchedule, LiftError, LiftedFunction, Reg, Result, Successors, error as lift_error,
+    InstructionSchedule, LiftError, LiftedFunction, Register, Result, Successors,
+    error as lift_error,
 };
 
 /// Upper bound on a function's register-file width. Real WebAssembly functions
@@ -20,7 +21,7 @@ const MAX_REGISTER_FILE_WIDTH: u32 = 4096;
 const PENDING: u32 = u32::MAX;
 
 /// Lifts every defined function in `bytes` to its static register schedule.
-pub(crate) fn lift_bytes(bytes: &[u8]) -> Result<Vec<LiftedFunction>> {
+pub(crate) fn lift_functions(bytes: &[u8]) -> Result<Vec<LiftedFunction>> {
     let info = ModuleInfo::parse(bytes)?;
     info.bodies
         .iter()
@@ -207,8 +208,8 @@ enum Slot {
 struct ValueEffect {
     pops: u32,
     pushes: u32,
-    bank_read: Option<Reg>,
-    bank_write: Option<Reg>,
+    bank_read: Option<Register>,
+    bank_write: Option<Register>,
     /// `local.tee`: reads the operand-stack top and writes a local while leaving
     /// the top in place, so its stack slot is not rewritten.
     is_tee: bool,
@@ -225,7 +226,7 @@ impl ValueEffect {
         }
     }
 
-    fn bank_read(reg: Reg) -> Self {
+    fn bank_read(reg: Register) -> Self {
         Self {
             pops: 0,
             pushes: 1,
@@ -235,7 +236,7 @@ impl ValueEffect {
         }
     }
 
-    fn bank_write(reg: Reg) -> Self {
+    fn bank_write(reg: Register) -> Self {
         Self {
             pops: 1,
             pushes: 0,
@@ -245,7 +246,7 @@ impl ValueEffect {
         }
     }
 
-    fn tee(reg: Reg) -> Self {
+    fn tee(reg: Register) -> Self {
         Self {
             pops: 1,
             pushes: 1,
@@ -265,7 +266,7 @@ struct Lifter<'a> {
     height: u32,
     max_height: u32,
     ctrl: Vec<Frame>,
-    instrs: Vec<InstrSchedule>,
+    instrs: Vec<InstructionSchedule>,
 }
 
 impl<'a> Lifter<'a> {
@@ -340,7 +341,7 @@ impl<'a> Lifter<'a> {
         (0..n).for_each(|_| self.pop_one());
     }
 
-    /// Marks the current frame unreachable, resetting the height to its floor --
+    /// Marks the current frame unreachable, resetting the height to its floor---
     /// the WASM validation algorithm's treatment of code after an unconditional
     /// branch, `return`, or `unreachable`.
     fn mark_unreachable(&mut self) {
@@ -354,11 +355,11 @@ impl<'a> Lifter<'a> {
         &mut self,
         pc: u32,
         height_in: u32,
-        reads: Vec<Reg>,
-        writes: Vec<Reg>,
+        reads: Vec<Register>,
+        writes: Vec<Register>,
         successors: Successors,
     ) {
-        self.instrs.push(InstrSchedule {
+        self.instrs.push(InstructionSchedule {
             pc,
             height_in,
             reads,
@@ -438,7 +439,7 @@ impl<'a> Lifter<'a> {
         }
 
         if let Some(if_idx) = frame.if_instr
-            && let Some(InstrSchedule {
+            && let Some(InstructionSchedule {
                 successors: Successors::Branch { not_taken, .. },
                 ..
             }) = self.instrs.get_mut(if_idx)
@@ -481,18 +482,18 @@ impl<'a> Lifter<'a> {
         }
     }
 
-    fn stack_read(&self, depth_from_top: u32) -> Result<Reg> {
+    fn stack_read(&self, depth_from_top: u32) -> Result<Register> {
         self.height
             .checked_sub(depth_from_top)
             .ok_or_else(|| lift_error::internal("operand-stack read underflows the stack"))
-            .map(Reg::Stack)
+            .map(Register::Stack)
     }
 
-    fn top_reads(&self, n: u32) -> Result<Vec<Reg>> {
+    fn top_reads(&self, n: u32) -> Result<Vec<Register>> {
         (1..=n).map(|k| self.stack_read(k)).collect()
     }
 
-    fn value_regs(&self, eff: &ValueEffect) -> Result<(Vec<Reg>, Vec<Reg>)> {
+    fn value_regs(&self, eff: &ValueEffect) -> Result<(Vec<Register>, Vec<Register>)> {
         let mut reads = Vec::new();
         if let Some(reg) = eff.bank_read {
             reads.push(reg);
@@ -515,7 +516,7 @@ impl<'a> Lifter<'a> {
                 let depth = base.checked_add(k).ok_or_else(|| {
                     lift_error::internal("operand-stack write overflows the stack")
                 })?;
-                writes.push(Reg::Stack(depth));
+                writes.push(Register::Stack(depth));
             }
             if let Some(reg) = eff.bank_write {
                 writes.push(reg);
@@ -597,7 +598,7 @@ impl<'a> Lifter<'a> {
                 let else_body = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
                     func_index: self.func_index,
                 })?;
-                if let Some(InstrSchedule {
+                if let Some(InstructionSchedule {
                     successors: Successors::Branch { not_taken, .. },
                     ..
                 }) = self.instrs.get_mut(if_idx)
@@ -769,11 +770,11 @@ fn classify_value_op(op: &Operator, info: &ModuleInfo, offset: usize) -> Result<
     let eff = match op {
         I32Const { .. } | I64Const { .. } => ValueEffect::stack(0, 1),
 
-        LocalGet { local_index } => ValueEffect::bank_read(Reg::Local(*local_index)),
-        LocalSet { local_index } => ValueEffect::bank_write(Reg::Local(*local_index)),
-        LocalTee { local_index } => ValueEffect::tee(Reg::Local(*local_index)),
-        GlobalGet { global_index } => ValueEffect::bank_read(Reg::Global(*global_index)),
-        GlobalSet { global_index } => ValueEffect::bank_write(Reg::Global(*global_index)),
+        LocalGet { local_index } => ValueEffect::bank_read(Register::Local(*local_index)),
+        LocalSet { local_index } => ValueEffect::bank_write(Register::Local(*local_index)),
+        LocalTee { local_index } => ValueEffect::tee(Register::Local(*local_index)),
+        GlobalGet { global_index } => ValueEffect::bank_read(Register::Global(*global_index)),
+        GlobalSet { global_index } => ValueEffect::bank_write(Register::Global(*global_index)),
 
         I32Eqz | I32Clz | I32Ctz | I32Popcnt | I32WrapI64 | I64Eqz | I64Clz | I64Ctz
         | I64Popcnt | I64ExtendI32S | I64ExtendI32U => ValueEffect::stack(1, 1),

@@ -11,6 +11,8 @@ publish = false
 ananse_decoder = { workspace = true }
 ananse_lift = { workspace = true }
 ananse_executor = { workspace = true }
+ananse_trace = { workspace = true }
+ananse_air = { workspace = true }
 
 maat_field = { workspace = true }
 wasmparser = { workspace = true }

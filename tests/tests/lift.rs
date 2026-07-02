@@ -1,5 +1,5 @@
 use ananse_decoder::Module;
-use ananse_lift::{Reg, Successors, lift};
+use ananse_lift::{Register, Successors, lift};
 use ananse_tests::{WAT_FILES, WAT_SNIPPETS, wasm_features, wat_from_file, wat_from_str};
 use wasmparser::{Parser, ValidPayload, Validator};
 
@@ -84,13 +84,13 @@ fn func_add_register_schedule() {
 
     // local.get 0, local.get 1, i32.add, end
     assert_eq!(f.instrs.len(), 4);
-    assert_eq!(f.instrs[0].reads, [Reg::Local(0)]);
-    assert_eq!(f.instrs[0].writes, [Reg::Stack(0)]);
-    assert_eq!(f.instrs[1].reads, [Reg::Local(1)]);
-    assert_eq!(f.instrs[1].writes, [Reg::Stack(1)]);
+    assert_eq!(f.instrs[0].reads, [Register::Local(0)]);
+    assert_eq!(f.instrs[0].writes, [Register::Stack(0)]);
+    assert_eq!(f.instrs[1].reads, [Register::Local(1)]);
+    assert_eq!(f.instrs[1].writes, [Register::Stack(1)]);
     // operands are popped top-first: the second-pushed value leads.
-    assert_eq!(f.instrs[2].reads, [Reg::Stack(1), Reg::Stack(0)]);
-    assert_eq!(f.instrs[2].writes, [Reg::Stack(0)]);
+    assert_eq!(f.instrs[2].reads, [Register::Stack(1), Register::Stack(0)]);
+    assert_eq!(f.instrs[2].writes, [Register::Stack(0)]);
     assert_eq!(f.instrs[2].successors, Successors::Fallthrough);
     assert_eq!(f.instrs[3].successors, Successors::Return);
 }
@@ -102,10 +102,10 @@ fn local_set_reads_stack_writes_local() {
     let f = &program.functions[0];
     assert_eq!(f.locals_count, 1, "no params, one declared local");
     // i32.const 42, local.set 0, local.get 0, end
-    assert_eq!(f.instrs[1].reads, [Reg::Stack(0)]);
-    assert_eq!(f.instrs[1].writes, [Reg::Local(0)]);
-    assert_eq!(f.instrs[2].reads, [Reg::Local(0)]);
-    assert_eq!(f.instrs[2].writes, [Reg::Stack(0)]);
+    assert_eq!(f.instrs[1].reads, [Register::Stack(0)]);
+    assert_eq!(f.instrs[1].writes, [Register::Local(0)]);
+    assert_eq!(f.instrs[2].reads, [Register::Local(0)]);
+    assert_eq!(f.instrs[2].writes, [Register::Stack(0)]);
 }
 
 #[test]
@@ -131,8 +131,8 @@ fn call_resolves_callee_arity() {
     assert_eq!(program.functions[1].func_index, 1);
     // call_doubler: local.get 0, call $double, end
     let caller = &program.functions[0];
-    assert_eq!(caller.instrs[1].reads, [Reg::Stack(0)]);
-    assert_eq!(caller.instrs[1].writes, [Reg::Stack(0)]);
+    assert_eq!(caller.instrs[1].reads, [Register::Stack(0)]);
+    assert_eq!(caller.instrs[1].writes, [Register::Stack(0)]);
     assert_eq!(caller.instrs[1].successors, Successors::Fallthrough);
 }
 

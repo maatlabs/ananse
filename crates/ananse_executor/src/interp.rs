@@ -1,5 +1,5 @@
 use ananse_decoder::Module;
-use ananse_lift::{LiftedFunction, LiftedProgram, Reg, Successors, lift};
+use ananse_lift::{LiftedFunction, LiftedProgram, Register, Successors, lift};
 use wasmparser::Operator;
 
 use crate::image::{Image, PAGE_SIZE};
@@ -912,7 +912,7 @@ fn extend(raw: u64, bytes: usize, signed: bool, result64: bool) -> Word {
 }
 
 fn resolve(
-    regs: &[Reg],
+    regs: &[Register],
     stack: &[Word],
     locals: &[Word],
     globals: &[Word],
@@ -927,11 +927,11 @@ fn resolve(
         .collect()
 }
 
-fn read_reg(reg: Reg, stack: &[Word], locals: &[Word], globals: &[Word]) -> Result<Word> {
+fn read_reg(reg: Register, stack: &[Word], locals: &[Word], globals: &[Word]) -> Result<Word> {
     let value = match reg {
-        Reg::Local(i) => locals.get(i as usize).copied(),
-        Reg::Global(g) => globals.get(g as usize).copied(),
-        Reg::Stack(d) => stack.get(d as usize).copied(),
+        Register::Local(i) => locals.get(i as usize).copied(),
+        Register::Global(g) => globals.get(g as usize).copied(),
+        Register::Stack(d) => stack.get(d as usize).copied(),
     };
     value.ok_or_else(|| exec_error::inconsistent("register access out of range"))
 }
