@@ -1,5 +1,6 @@
 <div align="center">
   <h1>Ananse</h1>
+  <img src="./assets/ananse-wasm-zkvm.png" alt="Logo" height="200" width="200">
   <h2>A WebAssembly-native zero-knowledge virtual machine (zkVM)</h2>
   <br />
 </div>
