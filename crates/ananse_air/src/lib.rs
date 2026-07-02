@@ -17,7 +17,7 @@
 #![forbid(unsafe_code)]
 
 mod address;
-mod aux;
+mod aux_segment;
 mod bus;
 mod consistency;
 mod error;
@@ -27,7 +27,9 @@ mod transition;
 
 use ananse_trace::layout::{COL_CLK, COL_HEIGHT, COL_PC, SELECTOR_BASE};
 use ananse_trace::selector::SEL_PADDING;
-pub use aux::{AUX_WIDTH, NUM_AUX_CONSTRAINTS, NUM_AUX_RANDS, build_aux_columns, periodic_table};
+pub use aux_segment::{
+    AUX_WIDTH, NUM_AUX_CONSTRAINTS, NUM_AUX_RANDS, build_aux_columns, periodic_table,
+};
 pub use error::AirError;
 use maat_field::{ExtensionOf, Felt, FieldElement, ToElements};
 pub use rom::{pack_edge, program_rom};
@@ -100,7 +102,7 @@ impl Air for AnanseAir {
             transition::degrees(),
             aux_degrees(),
             NUM_ASSERTIONS,
-            aux::NUM_AUX_ASSERTIONS,
+            aux_segment::NUM_AUX_ASSERTIONS,
             options,
         );
         Self {
@@ -134,7 +136,7 @@ impl Air for AnanseAir {
         F: FieldElement<BaseField = Self::BaseField>,
         E: FieldElement<BaseField = Self::BaseField> + ExtensionOf<F>,
     {
-        aux::evaluate_transition(
+        aux_segment::evaluate_transition(
             main_frame,
             aux_frame,
             periodic_values[0],
@@ -166,8 +168,8 @@ impl Air for AnanseAir {
     ) -> Vec<Assertion<E>> {
         let last_row = self.context.trace_info().length().saturating_sub(1);
         vec![
-            Assertion::single(aux::AUX_GRAND_SUM, 0, E::ZERO),
-            Assertion::single(aux::AUX_GRAND_SUM, last_row, E::ZERO),
+            Assertion::single(aux_segment::AUX_GRAND_SUM, 0, E::ZERO),
+            Assertion::single(aux_segment::AUX_GRAND_SUM, last_row, E::ZERO),
         ]
     }
 }
