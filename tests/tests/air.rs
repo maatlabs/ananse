@@ -3,10 +3,13 @@ use ananse_decoder::Module;
 use ananse_executor::{Entry, OpCode, Transition, Word, execute, function_opcodes};
 use ananse_lift::{Register, lift};
 use ananse_tests::{
-    SINGLE_FRAME_FIXTURES, TestHost, air_for, failing_rows, main_matrix, mock_challenge,
+    SINGLE_FRAME_FIXTURES, TestHost, air_for, failing_rows, main_matrix, mock_challenges,
     permutation_of, trace_and_rom, trace_and_rom_entry, wat_from_file,
 };
-use ananse_trace::layout::{COL_CLK, COL_HEIGHT, SELECTOR_BASE, bus_slot, slot};
+use ananse_trace::Trace;
+use ananse_trace::layout::{
+    BUS_SLOTS, COL_CLK, COL_HEIGHT, SELECTOR_BASE, bus_slot, slot, sorted, sorted_slot,
+};
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING, opcode_index};
 use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks as Felt;
@@ -20,143 +23,9 @@ fn is_arithmetic(opcode: OpCode) -> bool {
     )
 }
 
-#[test]
-fn every_single_frame_trace_satisfies_the_constraints() {
-    let alpha = mock_challenge();
-    for name in SINGLE_FRAME_FIXTURES {
-        let (trace, rom) = trace_and_rom(&wat_from_file(name));
-        let air = air_for(&trace, &rom);
-        let main = main_matrix(trace.columns(), trace.length());
-        let perm = permutation_of(&main, &rom, alpha);
-        let failing = failing_rows(&air, &main, &perm, alpha);
-        assert!(failing.is_empty(), "{name}: {failing:?}");
-    }
-}
-
-#[test]
-fn adding_a_second_hot_selector_breaks_one_hotness() {
-    let alpha = mock_challenge();
-    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
-    let air = air_for(&trace, &rom);
-    let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, alpha);
-    assert!(failing_rows(&air, &main, &perm, alpha).is_empty());
-
-    // Forcing a second hot selector on row 0---the padding selector, otherwise zero on
-    // a real step---makes the row's selectors sum to two and breaks one-hotness.
-    let mut columns = trace.columns().to_vec();
-    columns[SELECTOR_BASE + SEL_PADDING][0] = Felt::ONE;
-    let forged = main_matrix(&columns, trace.length());
-    let failing = failing_rows(&air, &forged, &perm, alpha);
-    assert!(
-        failing.contains(&0),
-        "expected a row-0 violation, got {failing:?}"
-    );
-}
-
-#[test]
-fn stalling_the_clock_breaks_the_increment() {
-    let alpha = mock_challenge();
-    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
-    let air = air_for(&trace, &rom);
-    let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, alpha);
-    assert!(failing_rows(&air, &main, &perm, alpha).is_empty());
-
-    // The clock advances by one every row; stalling it on row 1 makes row 0's
-    // increment constraint fail, so timestamps cannot be reused across accesses.
-    let mut columns = trace.columns().to_vec();
-    columns[COL_CLK][1] = columns[COL_CLK][0];
-    let forged = main_matrix(&columns, trace.length());
-    let failing = failing_rows(&air, &forged, &perm, alpha);
-    assert!(
-        failing.contains(&0),
-        "expected a row-0 clock violation, got {failing:?}"
-    );
-}
-
-#[test]
-fn clearing_padding_in_the_halt_suffix_breaks_absorption() {
-    let alpha = mock_challenge();
-    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
-    let air = air_for(&trace, &rom);
-    let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, alpha);
-    assert!(failing_rows(&air, &main, &perm, alpha).is_empty());
-
-    // Padding is absorbing: clearing the padding selector on a row inside the halt
-    // suffix makes the preceding still-padding row's absorbing constraint fail, so a
-    // prover cannot revive a real step in the trace tail.
-    let pad = trace.steps();
-    assert!(pad + 1 < trace.length(), "fixture needs a padding pair");
-    let mut columns = trace.columns().to_vec();
-    columns[SELECTOR_BASE + SEL_PADDING][pad + 1] = Felt::ZERO;
-    let forged = main_matrix(&columns, trace.length());
-    let failing = failing_rows(&air, &forged, &perm, alpha);
-    assert!(
-        failing.contains(&pad),
-        "expected an absorbing violation at row {pad}, got {failing:?}"
-    );
-}
-
-#[test]
-fn forging_an_opcode_breaks_the_control_flow_lookup() {
-    let alpha = mock_challenge();
-    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
-    let air = air_for(&trace, &rom);
-    let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, alpha);
-    assert!(failing_rows(&air, &main, &perm, alpha).is_empty());
-
-    // Move row 0's hot selector to a different opcode: one-hotness still holds, but the
-    // edge recomputed from the main trace changes, so the honest grand sum no longer
-    // telescopes and the lookup recurrence breaks on that row.
-    let mut columns = trace.columns().to_vec();
-    let hot = (0..NUM_SELECTORS)
-        .find(|&j| columns[SELECTOR_BASE + j][0] == Felt::ONE)
-        .expect("row 0 is one-hot");
-    columns[SELECTOR_BASE + hot][0] = Felt::ZERO;
-    let forged_selector = if hot == 0 { 1 } else { 0 };
-    columns[SELECTOR_BASE + forged_selector][0] = Felt::ONE;
-    let forged = main_matrix(&columns, trace.length());
-    let failing = failing_rows(&air, &forged, &perm, alpha);
-    assert!(
-        failing.contains(&0),
-        "expected a row-0 lookup violation, got {failing:?}"
-    );
-}
-
-#[test]
-fn forging_a_height_breaks_the_control_flow_lookup() {
-    let alpha = mock_challenge();
-    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
-    let air = air_for(&trace, &rom);
-    let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, alpha);
-    assert!(failing_rows(&air, &main, &perm, alpha).is_empty());
-
-    // The height rides the ROM edge. Nudging it on a non-first, non-arithmetic step
-    // packs an edge absent from the table without tripping the first-row height
-    // boundary or the address family, isolating the break to the lookup recurrence.
-    let row = (1..trace.steps())
-        .find(|&r| !is_arithmetic(trace.records()[r].opcode))
-        .expect("a non-arithmetic step past the first");
-    let mut columns = trace.columns().to_vec();
-    columns[COL_HEIGHT][row] += Felt::ONE;
-    let forged = main_matrix(&columns, trace.length());
-    let failing = failing_rows(&air, &forged, &perm, alpha);
-    assert!(
-        failing.contains(&row),
-        "expected a row-{row} lookup violation, got {failing:?}"
-    );
-}
-
 /// Runs `export(args)`, confirms the honest trace satisfies the AIR, then corrupts one
 /// limb of the operator's result on the value bus and confirms the break localizes to
-/// the operator's own row. Only the numeric family reads a bus slot's value limbs, so a
-/// violation there is that family catching the wrong result. `tamper_hi` selects the
-/// high limb (the inter-limb carry / borrow and the `i32` zeroing) over the low limb
-/// (the addition / subtraction balance).
+/// the operator's own row.
 fn assert_numeric_relation(
     fixture: &str,
     export: &str,
@@ -164,14 +33,14 @@ fn assert_numeric_relation(
     opcode: OpCode,
     tamper_hi: bool,
 ) {
-    let alpha = mock_challenge();
+    let challenges = mock_challenges();
     let (trace, rom) =
         trace_and_rom_entry(&wat_from_file(fixture), &Entry::Export(export.into()), args);
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, alpha);
+    let perm = permutation_of(&main, &rom, challenges);
     assert!(
-        failing_rows(&air, &main, &perm, alpha).is_empty(),
+        failing_rows(&air, &main, &perm, challenges).is_empty(),
         "{export}{args:?}: honest trace violates the AIR"
     );
 
@@ -186,10 +55,247 @@ fn assert_numeric_relation(
     let mut columns = trace.columns().to_vec();
     columns[column][row] += Felt::ONE;
     let forged = main_matrix(&columns, trace.length());
-    let failing = failing_rows(&air, &forged, &perm, alpha);
+    let failing = failing_rows(&air, &forged, &perm, challenges);
     assert!(
         failing.contains(&row),
         "{export}{args:?} (tamper_hi={tamper_hi}): numeric family missed the corruption, got {failing:?}"
+    );
+}
+
+/// Non-arithmetic real step carrying an active value-bus read, as `(row, slot_base)`.
+fn non_arithmetic_bus_read(trace: &Trace) -> Option<(usize, usize)> {
+    let columns = trace.columns();
+    (0..trace.steps())
+        .filter(|&r| !is_arithmetic(trace.records()[r].opcode))
+        .find_map(|r| {
+            (0..BUS_SLOTS).find_map(|s| {
+                let base = bus_slot(s);
+                let active = columns[base + slot::ACTIVE][r] == Felt::ONE;
+                let is_read = columns[base + slot::IS_WRITE][r] == Felt::ZERO;
+                (active && is_read).then_some((r, base))
+            })
+        })
+}
+
+/// Active address-sorted-log entry, as `(row, entry_base)`.
+fn active_sorted_entry(trace: &Trace) -> Option<(usize, usize)> {
+    let columns = trace.columns();
+    (0..trace.length()).find_map(|r| {
+        (0..BUS_SLOTS).find_map(|s| {
+            let base = sorted_slot(s);
+            (columns[base + sorted::ACTIVE][r] == Felt::ONE).then_some((r, base))
+        })
+    })
+}
+
+#[test]
+fn every_single_frame_trace_satisfies_the_constraints() {
+    let challenges = mock_challenges();
+    for name in SINGLE_FRAME_FIXTURES {
+        let (trace, rom) = trace_and_rom(&wat_from_file(name));
+        let air = air_for(&trace, &rom);
+        let main = main_matrix(trace.columns(), trace.length());
+        let perm = permutation_of(&main, &rom, challenges);
+        let failing = failing_rows(&air, &main, &perm, challenges);
+        assert!(failing.is_empty(), "{name}: {failing:?}");
+    }
+}
+
+#[test]
+fn adding_a_second_hot_selector_breaks_one_hotness() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    // Forcing a second hot selector on row 0---the padding selector, otherwise zero on
+    // a real step---makes the row's selectors sum to two and breaks one-hotness.
+    let mut columns = trace.columns().to_vec();
+    columns[SELECTOR_BASE + SEL_PADDING][0] = Felt::ONE;
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, challenges);
+    assert!(
+        failing.contains(&0),
+        "expected a row-0 violation, got {failing:?}"
+    );
+}
+
+#[test]
+fn stalling_the_clock_breaks_the_increment() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    // The clock advances by one every row; stalling it on row 1 makes row 0's
+    // increment constraint fail, so timestamps cannot be reused across accesses.
+    let mut columns = trace.columns().to_vec();
+    columns[COL_CLK][1] = columns[COL_CLK][0];
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, challenges);
+    assert!(
+        failing.contains(&0),
+        "expected a row-0 clock violation, got {failing:?}"
+    );
+}
+
+#[test]
+fn clearing_padding_in_the_halt_suffix_breaks_absorption() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    // Padding is absorbing: clearing the padding selector on a row inside the halt
+    // suffix makes the preceding still-padding row's absorbing constraint fail, so a
+    // prover cannot revive a real step in the trace tail.
+    let pad = trace.steps();
+    assert!(pad + 1 < trace.length(), "fixture needs a padding pair");
+    let mut columns = trace.columns().to_vec();
+    columns[SELECTOR_BASE + SEL_PADDING][pad + 1] = Felt::ZERO;
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, challenges);
+    assert!(
+        failing.contains(&pad),
+        "expected an absorbing violation at row {pad}, got {failing:?}"
+    );
+}
+
+#[test]
+fn forging_an_opcode_breaks_the_control_flow_lookup() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    // Move row 0's hot selector to a different opcode: one-hotness still holds, but the
+    // edge recomputed from the main trace changes, so the honest grand sum no longer
+    // telescopes and the lookup recurrence breaks on that row.
+    let mut columns = trace.columns().to_vec();
+    let hot = (0..NUM_SELECTORS)
+        .find(|&j| columns[SELECTOR_BASE + j][0] == Felt::ONE)
+        .expect("row 0 is one-hot");
+    columns[SELECTOR_BASE + hot][0] = Felt::ZERO;
+    let forged_selector = if hot == 0 { 1 } else { 0 };
+    columns[SELECTOR_BASE + forged_selector][0] = Felt::ONE;
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, challenges);
+    assert!(
+        failing.contains(&0),
+        "expected a row-0 lookup violation, got {failing:?}"
+    );
+}
+
+#[test]
+fn forging_a_height_breaks_the_control_flow_lookup() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    // The height rides the ROM edge. Nudging it on a non-first, non-arithmetic step
+    // packs an edge absent from the table without tripping the first-row height
+    // boundary or the address family, isolating the break to the lookup recurrence.
+    let row = (1..trace.steps())
+        .find(|&r| !is_arithmetic(trace.records()[r].opcode))
+        .expect("a non-arithmetic step past the first");
+    let mut columns = trace.columns().to_vec();
+    columns[COL_HEIGHT][row] += Felt::ONE;
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, challenges);
+    assert!(
+        failing.contains(&row),
+        "expected a row-{row} lookup violation, got {failing:?}"
+    );
+}
+
+#[test]
+fn forging_a_bus_access_value_breaks_the_permutation() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    let (row, base) = non_arithmetic_bus_read(&trace).expect("a non-arithmetic bus read");
+    let mut columns = trace.columns().to_vec();
+    columns[base + slot::LO][row] += Felt::ONE;
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, challenges);
+    assert!(
+        failing.contains(&row),
+        "expected a row-{row} permutation violation, got {failing:?}"
+    );
+}
+
+#[test]
+fn dropping_a_bus_access_breaks_the_permutation() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    let (row, base) = non_arithmetic_bus_read(&trace).expect("a non-arithmetic bus read");
+    let mut columns = trace.columns().to_vec();
+    columns[base + slot::ACTIVE][row] = Felt::ZERO;
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, challenges);
+    assert!(
+        failing.contains(&row),
+        "expected a row-{row} permutation violation, got {failing:?}"
+    );
+}
+
+#[test]
+fn forging_a_sorted_timestamp_breaks_the_permutation() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    let (row, base) = active_sorted_entry(&trace).expect("an active sorted entry");
+    let mut columns = trace.columns().to_vec();
+    columns[base + sorted::TS][row] += Felt::ONE;
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, challenges);
+    assert!(
+        failing.contains(&row),
+        "expected a row-{row} permutation violation, got {failing:?}"
+    );
+}
+
+#[test]
+fn an_access_on_the_terminal_padding_row_is_rejected() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    let last = trace.length() - 1;
+    let mut columns = trace.columns().to_vec();
+    columns[bus_slot(0) + slot::ACTIVE][last] = Felt::ONE;
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, challenges);
+    assert!(
+        failing.contains(&last),
+        "expected a row-{last} padding-gate violation, got {failing:?}"
     );
 }
 

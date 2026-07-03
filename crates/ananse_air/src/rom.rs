@@ -7,7 +7,7 @@ use ananse_lift::{LiftedFunction, Register, Successors};
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING, opcode_index};
 use p3_goldilocks::Goldilocks as Felt;
 
-use crate::AirError;
+use crate::{AirError, Result};
 
 /// Radix of the opcode digit: the selector-column count, so every opcode index
 /// (including the padding selector) is a valid digit.
@@ -26,7 +26,7 @@ pub(crate) const IMM_PLACE: u64 = HEIGHT_PLACE * REG_RADIX;
 /// Builds the program ROM for a lifted function: every valid schedule edge
 /// `(pc, opcode, next_pc, height, imm)` packed into one field element, sorted and
 /// deduplicated so the prover and verifier produce a byte-identical table.
-pub fn program_rom(opcodes: &[OpCode], function: &LiftedFunction) -> Result<Vec<Felt>, AirError> {
+pub fn program_rom(opcodes: &[OpCode], function: &LiftedFunction) -> Result<Vec<Felt>> {
     let body_len = function.instrs.len();
     if opcodes.len() != body_len {
         return Err(AirError::ScheduleLengthMismatch {
@@ -65,7 +65,7 @@ pub fn program_rom(opcodes: &[OpCode], function: &LiftedFunction) -> Result<Vec<
         .map(|(pc, opcode_id, next_pc, height, imm)| {
             pack(pc, opcode_id, next_pc, height, imm).ok_or(AirError::ProgramTooLarge { body_len })
         })
-        .collect::<Result<Vec<u64>, _>>()?;
+        .collect::<Result<Vec<u64>>>()?;
 
     packed.push(
         pack(halt_pc, SEL_PADDING as u64, halt_pc, 0, 0)

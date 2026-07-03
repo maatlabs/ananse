@@ -15,39 +15,28 @@
 //! polynomial. Soundness is Schwartz-Zippel over the challenge, drawn from the
 //! quadratic extension so the base-field edges never collide with it.
 //!
-//! The witness is two permutation-trace columns---the per-entry multiplicities and
-//! the grand sum. The looked-up edge `f` is recomputed from the main trace rather
-//! than stored, and the table value `t` rides a verifier-filled periodic column, so
-//! the ROM never enters the committed trace. Both columns carry a leading zero
-//! spacer: ROM entry `j` and its multiplicity sit on row `j + 1`, and the transition
-//! into that row absorbs them, which aligns the next-row indexing above with the
-//! edge the current row looks up.
+//! The witness is two of the permutation trace's columns---the per-entry
+//! multiplicities and the grand sum---assembled alongside the consistency
+//! permutation's accumulators by [`build_permutation_trace`](crate::build_permutation_trace).
+//! The looked-up edge `f` is recomputed from the main trace rather than stored, and
+//! the table value `t` rides a verifier-filled periodic column, so the ROM never
+//! enters the committed trace. Both columns carry a leading zero spacer: ROM entry
+//! `j` and its multiplicity sit on row `j + 1`, and the transition into that row
+//! absorbs them, which aligns the next-row indexing above with the edge the current
+//! row looks up.
 
 use std::collections::HashMap;
 
 use ananse_trace::layout::{COL_HEIGHT, COL_IMM, COL_PC, SELECTOR_BASE};
 use ananse_trace::selector::NUM_SELECTORS;
 use p3_air::{AirBuilder, ExtensionBuilder, PermutationAirBuilder, WindowAccess};
-use p3_field::extension::BinomialExtensionField;
 use p3_field::{Dup, Field, PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks as Felt;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 
-use crate::AirError;
 use crate::rom::{HEIGHT_PLACE, IMM_PLACE, NEXT_PC_PLACE, OPCODE_RADIX};
-
-/// The quadratic extension of Goldilocks carrying the LogUp challenge and witness.
-pub type Ext = BinomialExtensionField<Felt, 2>;
-
-/// Permutation-trace column holding the per-ROM-entry lookup multiplicities.
-pub(crate) const AUX_MULTIPLICITY: usize = 0;
-/// Permutation-trace column holding the LogUp grand sum.
-pub(crate) const AUX_GRAND_SUM: usize = 1;
-/// Number of permutation-trace columns.
-pub const AUX_WIDTH: usize = 2;
-/// Number of permutation challenges: the single LogUp folding challenge.
-pub const NUM_CHALLENGES: usize = 1;
+use crate::{AUX_GRAND_SUM, AUX_MULTIPLICITY, AirError, CHALLENGE_CONTROL_FLOW, Ext, Result};
 
 /// The verifier-filled periodic column carrying the program ROM: row `i` holds ROM
 /// entry `i`, padded past the table's end with the first entry so the column spans
@@ -59,14 +48,15 @@ pub fn periodic_table(rom: &[Felt], length: usize) -> Vec<Felt> {
         .collect()
 }
 
-/// Builds the two-column permutation trace---per-ROM-entry multiplicities and the
+/// Builds the two control-flow-lookup columns---per-ROM-entry multiplicities and the
 /// running LogUp grand sum---binding each executed row's control-flow edge to the
-/// program `rom`, folded by the challenge `alpha`.
-pub fn build_permutation_trace(
+/// program `rom`, folded by the challenge `alpha`. The columns are assembled into the
+/// full permutation trace by [`build_permutation_trace`](crate::build_permutation_trace).
+pub(crate) fn control_flow_columns(
     main: &RowMajorMatrix<Felt>,
     rom: &[Felt],
     alpha: Ext,
-) -> Result<RowMajorMatrix<Ext>, AirError> {
+) -> Result<(Vec<Ext>, Vec<Ext>)> {
     let height = main.height();
     let width = main.width();
     let row = |r: usize| &main.values[r * width..(r + 1) * width];
@@ -98,7 +88,7 @@ pub fn build_permutation_trace(
             counts[*position] = counts[*position].saturating_add(1);
             Ok(f)
         })
-        .collect::<Result<Vec<Felt>, AirError>>()?;
+        .collect::<Result<Vec<Felt>>>()?;
 
     let pad = rom.first().copied().unwrap_or(Felt::ZERO);
     let mut multiplicity = vec![Ext::ZERO; height];
@@ -126,10 +116,7 @@ pub fn build_permutation_trace(
         grand_sum[i] = grand_sum[i - 1] + multiplicity[i] * t_inv - f_inv;
     }
 
-    let values = (0..height)
-        .flat_map(|i| [multiplicity[i], grand_sum[i]])
-        .collect();
-    Ok(RowMajorMatrix::new(values, AUX_WIDTH))
+    Ok((multiplicity, grand_sum))
 }
 
 /// Evaluates the grand-sum recurrence and its opening/closing boundary, binding the
@@ -138,7 +125,7 @@ pub fn build_permutation_trace(
 pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
     let main = builder.main();
     let perm = builder.permutation();
-    let alpha: AB::ExprEF = builder.permutation_randomness()[0].into();
+    let alpha: AB::ExprEF = builder.permutation_randomness()[CHALLENGE_CONTROL_FLOW].into();
     let table: AB::ExprEF = Into::<AB::Expr>::into(builder.periodic_values()[0]).into();
 
     let f: AB::ExprEF = edge_expr::<AB>(main.current_slice(), main.next_slice()).into();

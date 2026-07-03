@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use ananse_air::{AnanseAir, Ext, build_permutation_trace, program_rom};
+use ananse_air::{AnanseAir, Ext, NUM_CHALLENGES, build_permutation_trace, program_rom};
 use ananse_decoder::{ImportEntry, Module};
 use ananse_executor::{Entry, ExecuteError, Host, HostAction, Word, execute, function_opcodes};
 use ananse_lift::lift;
@@ -230,10 +230,16 @@ pub fn air_for(trace: &Trace, rom: &[Felt]) -> AnanseAir {
     AnanseAir::new(rom, trace.length(), trace.stack_base())
 }
 
-/// A fixed stand-in for the Fiat--Shamir folding challenge the prover draws, letting
-/// the control-flow lookup be exercised without a prover.
-pub fn mock_challenge() -> Ext {
-    Ext::from(Felt::new(0x9e37_79b9_7f4a_7c15))
+/// Fixed stand-ins for the Fiat--Shamir permutation challenges the prover draws,
+/// letting the control-flow lookup and consistency permutation be exercised without a
+/// prover: the control-flow folding challenge, then the consistency permutation's
+/// denominator and access-folding challenges, in [`NUM_CHALLENGES`] order.
+pub fn mock_challenges() -> [Ext; NUM_CHALLENGES] {
+    [
+        Ext::from(Felt::new(0x9e37_79b9_7f4a_7c15)),
+        Ext::from(Felt::new(0xff51_afd7_ed55_8ccd)),
+        Ext::from(Felt::new(0xc4ce_b9fe_1a85_ec53)),
+    ]
 }
 
 /// Packs the column-major trace into the row-major main matrix the constraint
@@ -246,29 +252,28 @@ pub fn main_matrix(columns: &[Vec<Felt>], length: usize) -> RowMajorMatrix<Felt>
     RowMajorMatrix::new(values, width)
 }
 
-/// Builds the LogUp permutation trace binding `main`'s control flow to `rom` under
-/// `challenge`.
+/// Builds the permutation trace binding `main`'s control flow to `rom` and its value
+/// bus to its sorted access log, under the permutation `challenges`.
 pub fn permutation_of(
     main: &RowMajorMatrix<Felt>,
     rom: &[Felt],
-    challenge: Ext,
+    challenges: [Ext; NUM_CHALLENGES],
 ) -> RowMajorMatrix<Ext> {
-    build_permutation_trace(main, rom, challenge).expect("permutation trace")
+    build_permutation_trace(main, rom, challenges).expect("permutation trace")
 }
 
 /// Evaluates every AIR constraint on each row of `main` paired with the permutation
-/// trace `perm` under `challenge`, returning the indices of rows carrying at least
-/// one violation.
+/// trace `perm` under the permutation `challenges`, returning the indices of rows
+/// carrying at least one violation.
 pub fn failing_rows(
     air: &AnanseAir,
     main: &RowMajorMatrix<Felt>,
     perm: &RowMajorMatrix<Ext>,
-    challenge: Ext,
+    challenges: [Ext; NUM_CHALLENGES],
 ) -> Vec<usize> {
     let height = main.height();
     let main_width = main.width();
     let perm_width = perm.width();
-    let challenges = [challenge];
     (0..height)
         .filter(|&row| {
             let next = (row + 1) % height;

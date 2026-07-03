@@ -8,15 +8,6 @@
 //! Together with the permutation tying this log to the execution-order bus, that is
 //! what makes every operand-stack, local, global, and memory read return the value
 //! last written to its cell.
-//!
-//! Consecutive entries are checked pairwise. Within a row the pairs are adjacent
-//! slots; across a row boundary the pair is the current row's last entry and the
-//! next row's first. Evaluating both on each row transition covers every consecutive
-//! pair in the flat sequence exactly once.
-//!
-//! The strict orderings that distinguish "same cell, later time" from "a greater
-//! address" are range checks on the gaps and are enforced by the range-check
-//! argument, not here; this module fixes the equalities those orderings sit on.
 
 use ananse_trace::layout::BUS_SLOTS;
 use p3_air::AirBuilder;

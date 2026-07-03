@@ -3,8 +3,10 @@
 //! Ananse proves WebAssembly directly against a register-shaped algebraic
 //! intermediate representation. This crate defines [`AnanseAir`], the single
 //! [`Air`] the STARK prover and verifier evaluate against the trace
-//! [`ananse_trace`] produces, together with the program-ROM table and the LogUp
-//! permutation trace that binds the trace's control flow and register layout to it.
+//! [`ananse_trace`] produces, together with the program-ROM table and the
+//! permutation trace ([`build_permutation_trace`]) that binds the trace's control
+//! flow and register layout to the ROM and proves the execution-order value bus and
+//! the address-sorted access log are one multiset.
 
 #![forbid(unsafe_code)]
 
@@ -14,22 +16,75 @@ mod consistency;
 mod error;
 mod logup;
 mod numeric;
+mod permutation;
 mod rom;
 
 use ananse_trace::layout::{BUS_SLOTS, COL_CLK, COL_HEIGHT, COL_PC, SELECTOR_BASE, main_width};
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING};
 pub use error::AirError;
-pub use logup::{AUX_WIDTH, Ext, NUM_CHALLENGES, build_permutation_trace, periodic_table};
+pub use logup::periodic_table;
 use p3_air::{Air, AirBuilder, BaseAir, PermutationAirBuilder, WindowAccess};
 use p3_field::PrimeCharacteristicRing;
+use p3_field::extension::BinomialExtensionField;
 use p3_goldilocks::Goldilocks as Felt;
+use p3_matrix::Matrix;
+use p3_matrix::dense::RowMajorMatrix;
 pub use rom::{pack_edge, program_rom};
 
 use crate::bus::{BusSlot, SortedEntry};
 
+/// Result alias for AIR operations.
+pub type Result<T> = core::result::Result<T, AirError>;
+
+/// The quadratic extension of Goldilocks carrying the permutation-argument
+/// challenges and the LogUp and multiset-equality witnesses.
+pub type Ext = BinomialExtensionField<Felt, 2>;
+
+/// Permutation-trace column holding the per-ROM-entry control-flow multiplicities.
+pub(crate) const AUX_MULTIPLICITY: usize = 0;
+/// Permutation-trace column holding the control-flow LogUp grand sum.
+pub(crate) const AUX_GRAND_SUM: usize = 1;
+/// Permutation-trace column holding the execution-order value-bus accumulator.
+pub(crate) const AUX_BUS_ACC: usize = 2;
+/// Permutation-trace column holding the address-sorted-log accumulator.
+pub(crate) const AUX_SORTED_ACC: usize = 3;
+/// Number of permutation-trace columns: the control-flow lookup's two and the
+/// consistency permutation's two.
+pub const AUX_WIDTH: usize = 4;
+
+/// Challenge index of the control-flow lookup's folding challenge.
+pub(crate) const CHALLENGE_CONTROL_FLOW: usize = 0;
+/// Challenge index of the consistency permutation's logderivative denominator.
+pub(crate) const CHALLENGE_DENOM: usize = 1;
+/// Challenge index of the consistency permutation's access-folding challenge.
+pub(crate) const CHALLENGE_FOLD: usize = 2;
+/// Number of permutation challenges: the control-flow folding challenge and the
+/// consistency permutation's denominator and folding challenges.
+pub const NUM_CHALLENGES: usize = 3;
+
+/// Builds the permutation trace the AIR evaluates against `main`.
+pub fn build_permutation_trace(
+    main: &RowMajorMatrix<Felt>,
+    rom: &[Felt],
+    challenges: [Ext; NUM_CHALLENGES],
+) -> Result<RowMajorMatrix<Ext>> {
+    let (multiplicity, grand_sum) =
+        logup::control_flow_columns(main, rom, challenges[CHALLENGE_CONTROL_FLOW])?;
+    let (bus_acc, sorted_acc) = permutation::consistency_columns(
+        main,
+        challenges[CHALLENGE_DENOM],
+        challenges[CHALLENGE_FOLD],
+    )?;
+    let values = (0..main.height())
+        .flat_map(|i| [multiplicity[i], grand_sum[i], bus_acc[i], sorted_acc[i]])
+        .collect();
+    Ok(RowMajorMatrix::new(values, AUX_WIDTH))
+}
+
 /// The register-shaped AIR: one main trace carrying the unified access-log, plus a
 /// permutation trace (built by [`build_permutation_trace`]) carrying the LogUp
-/// witness that binds the trace's control flow and layout to the program ROM.
+/// witness that binds the trace's control flow and layout to the program ROM and the
+/// accumulators that prove its value bus and sorted access log are one multiset.
 pub struct AnanseAir {
     rom_periodic: Vec<Felt>,
     stack_base: u64,
@@ -76,6 +131,7 @@ impl<AB: PermutationAirBuilder<F = Felt>> Air<AB> for AnanseAir {
         consistency::evaluate(builder, local, next);
         address::evaluate(builder, local, self.stack_base);
         logup::evaluate(builder);
+        permutation::evaluate(builder);
     }
 }
 
@@ -106,6 +162,11 @@ fn init_eval<AB: AirBuilder<F = Felt>>(builder: &mut AB, local: &[AB::Var], next
     }
 
     let pad = local[SELECTOR_BASE + SEL_PADDING];
+    for index in 0..BUS_SLOTS {
+        builder.assert_zero(pad * BusSlot::read(local, index).active);
+        builder.assert_zero(pad * SortedEntry::read(local, index).active);
+    }
+
     let pad_next = next[SELECTOR_BASE + SEL_PADDING];
     builder
         .when_transition()

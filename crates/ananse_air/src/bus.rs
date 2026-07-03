@@ -36,6 +36,8 @@ impl<V: Copy> BusSlot<V> {
 pub(crate) struct SortedEntry<V> {
     /// Access address; entries are laid in non-decreasing address order.
     pub addr: V,
+    /// Timestamp the access carried on the value bus, `clk * BUS_SLOTS + slot`.
+    pub ts: V,
     /// Low limb of the accessed value.
     pub lo: V,
     /// High limb of the accessed value.
@@ -54,6 +56,7 @@ impl<V: Copy> SortedEntry<V> {
         let base = sorted_slot(index);
         Self {
             addr: row[base + sorted::ADDR],
+            ts: row[base + sorted::TS],
             lo: row[base + sorted::LO],
             hi: row[base + sorted::HI],
             is_write: row[base + sorted::IS_WRITE],
