@@ -10,8 +10,6 @@ use p3_goldilocks::Goldilocks as Felt;
 
 use crate::bus::BusSlot;
 
-/// Evaluates the numeric family on the current row `local`, asserting one residual
-/// per additive relation.
 pub(crate) fn evaluate<AB: AirBuilder<F = Felt>>(builder: &mut AB, local: &[AB::Var]) {
     let two32 = Felt::new(1u64 << 32);
     let inv32 = two32.inverse();

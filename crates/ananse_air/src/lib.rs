@@ -3,10 +3,7 @@
 //! Ananse proves WebAssembly directly against a register-shaped algebraic
 //! intermediate representation. This crate defines [`AnanseAir`], the single
 //! [`Air`] the STARK prover and verifier evaluate against the trace
-//! [`ananse_trace`] produces, together with the program-ROM table and the
-//! permutation trace ([`build_permutation_trace`]) that binds the trace's control
-//! flow and register layout to the ROM and proves the execution-order value bus and
-//! the address-sorted access log are one multiset.
+//! [`ananse_trace`] produces.
 
 #![forbid(unsafe_code)]
 
@@ -19,7 +16,7 @@ use ananse_trace::layout::{
     BUS_SLOTS, COL_CLK, COL_HEIGHT, COL_PC, RANGE_COLS, SELECTOR_BASE, main_width,
 };
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING};
-use constraints::{address, consistency, logup, numeric, permutation, range};
+use constraints::{address, boundary, consistency, logup, numeric, permutation, range};
 pub use error::AirError;
 use p3_air::{Air, AirBuilder, BaseAir, PermutationAirBuilder, WindowAccess};
 use p3_field::PrimeCharacteristicRing;
@@ -53,28 +50,33 @@ pub(crate) const AUX_RC_TABLE: usize = 5;
 /// First permutation-trace column of the byte-table channel reciprocals, one per
 /// range-check witness column.
 pub(crate) const AUX_RC_CHANNEL_BASE: usize = 6;
-/// Number of permutation-trace columns: the control-flow lookup's two, the
-/// consistency permutation's two, and the range check's multiplicity, table-side
-/// reciprocal, and one reciprocal per byte channel.
-pub const AUX_WIDTH: usize = AUX_RC_CHANNEL_BASE + RANGE_COLS;
+/// Permutation-trace column holding the boundary lookup's per-table-entry multiplicity.
+pub(crate) const AUX_BND_MULT: usize = AUX_RC_CHANNEL_BASE + RANGE_COLS;
+/// Permutation-trace column holding the boundary lookup's table-side running reciprocal.
+pub(crate) const AUX_BND_TABLE: usize = AUX_BND_MULT + 1;
+/// First permutation-trace column of the boundary lookup's channel reciprocals, one
+/// per sorted-log entry.
+pub(crate) const AUX_BND_CHANNEL_BASE: usize = AUX_BND_MULT + 2;
+/// Number of permutation-trace columns.
+pub const AUX_WIDTH: usize = AUX_BND_CHANNEL_BASE + BUS_SLOTS;
 
 /// Challenge index of the control-flow lookup's folding challenge.
 pub(crate) const CHALLENGE_CONTROL_FLOW: usize = 0;
 /// Challenge index of the consistency permutation's logderivative denominator.
 pub(crate) const CHALLENGE_DENOM: usize = 1;
-/// Challenge index of the consistency permutation's access-folding challenge.
+/// Challenge index of the access-folding challenge.
 pub(crate) const CHALLENGE_FOLD: usize = 2;
 /// Challenge index of the range-check byte-table's logderivative denominator.
 pub(crate) const CHALLENGE_RANGE: usize = 3;
-/// Number of permutation challenges: the control-flow folding challenge, the
-/// consistency permutation's denominator and folding challenges, and the range-check
-/// byte-table challenge.
-pub const NUM_CHALLENGES: usize = 4;
+/// Challenge index of the boundary lookup's logderivative denominator.
+pub(crate) const CHALLENGE_BOUNDARY: usize = 4;
+/// Number of permutation challenges.
+pub const NUM_CHALLENGES: usize = 5;
 
-/// Builds the permutation trace the AIR evaluates against `main`.
 pub fn build_permutation_trace(
     main: &RowMajorMatrix<Felt>,
     rom: &[Felt],
+    initial: &[(u64, Felt, Felt)],
     challenges: [Ext; NUM_CHALLENGES],
 ) -> Result<RowMajorMatrix<Ext>> {
     let (multiplicity, grand_sum) =
@@ -85,10 +87,17 @@ pub fn build_permutation_trace(
         challenges[CHALLENGE_FOLD],
     )?;
     let range = range::columns(main, challenges[CHALLENGE_RANGE])?;
+    let boundary = boundary::columns(
+        main,
+        initial,
+        challenges[CHALLENGE_FOLD],
+        challenges[CHALLENGE_BOUNDARY],
+    )?;
 
     let aux = [multiplicity, grand_sum, bus_acc, sorted_acc]
         .into_iter()
         .chain(range)
+        .chain(boundary)
         .collect::<Vec<Vec<Ext>>>();
     debug_assert_eq!(aux.len(), AUX_WIDTH);
     let values = (0..main.height())
@@ -97,24 +106,24 @@ pub fn build_permutation_trace(
     Ok(RowMajorMatrix::new(values, AUX_WIDTH))
 }
 
-/// The register-shaped AIR: one main trace carrying the unified access-log, plus a
-/// permutation trace (built by [`build_permutation_trace`]) carrying the LogUp
-/// witness that binds the trace's control flow and layout to the program ROM and the
-/// accumulators that prove its value bus and sorted access log are one multiset.
 pub struct AnanseAir {
     rom_periodic: Vec<Felt>,
     byte_table: Vec<Felt>,
+    boundary: [Vec<Felt>; 3],
     stack_base: u64,
 }
 
 impl AnanseAir {
-    /// Builds the AIR for a program ROM and the frame's operand-stack base. `rom` is
-    /// the packed ROM table from [`program_rom`]; `trace_len` is the padded trace
-    /// height the verifier-filled periodic ROM and byte-table columns span.
-    pub fn new(rom: &[Felt], trace_len: usize, stack_base: u32) -> Self {
+    pub fn new(
+        rom: &[Felt],
+        trace_len: usize,
+        stack_base: u32,
+        initial: &[(u64, Felt, Felt)],
+    ) -> Self {
         Self {
             rom_periodic: logup::periodic_table(rom, trace_len),
             byte_table: range::byte_table(trace_len),
+            boundary: boundary::periodic_columns(initial, trace_len),
             stack_base: u64::from(stack_base),
         }
     }
@@ -126,17 +135,26 @@ impl BaseAir<Felt> for AnanseAir {
     }
 
     fn num_periodic_columns(&self) -> usize {
-        2
+        5
     }
 
     fn periodic_columns(&self) -> Vec<Vec<Felt>> {
-        vec![self.rom_periodic.clone(), self.byte_table.clone()]
+        vec![
+            self.rom_periodic.clone(),
+            self.byte_table.clone(),
+            self.boundary[0].clone(),
+            self.boundary[1].clone(),
+            self.boundary[2].clone(),
+        ]
     }
 
     fn periodic_values(&self, row_index: usize) -> Vec<Felt> {
         vec![
             self.rom_periodic[row_index % self.rom_periodic.len()],
             self.byte_table[row_index % self.byte_table.len()],
+            self.boundary[0][row_index % self.boundary[0].len()],
+            self.boundary[1][row_index % self.boundary[1].len()],
+            self.boundary[2][row_index % self.boundary[2].len()],
         ]
     }
 }
@@ -154,12 +172,10 @@ impl<AB: PermutationAirBuilder<F = Felt>> Air<AB> for AnanseAir {
         logup::evaluate(builder);
         permutation::evaluate(builder);
         range::evaluate(builder);
+        boundary::evaluate(builder);
     }
 }
 
-/// Geometry-independent constraints: one-hot opcode selectors, value-bus and
-/// sorted-log flag booleanity, the padding absorber, the clock increment, and the
-/// entry/exit boundary.
 fn init_eval<AB: AirBuilder<F = Felt>>(builder: &mut AB, local: &[AB::Var], next: &[AB::Var]) {
     let selectors = &local[SELECTOR_BASE..SELECTOR_BASE + NUM_SELECTORS];
     for &selector in selectors {

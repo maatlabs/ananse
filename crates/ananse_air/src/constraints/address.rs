@@ -9,7 +9,6 @@ use p3_goldilocks::Goldilocks as Felt;
 
 use crate::bus::BusSlot;
 
-/// Evaluates the address-binding residuals on `local`, given the frame's public `stack_base`.
 pub(crate) fn evaluate<AB: AirBuilder<F = Felt>>(
     builder: &mut AB,
     local: &[AB::Var],

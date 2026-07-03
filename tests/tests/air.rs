@@ -1,4 +1,4 @@
-use ananse_air::{pack_edge, program_rom};
+use ananse_air::{AnanseAir, pack_edge, program_rom};
 use ananse_decoder::Module;
 use ananse_executor::{Entry, OpCode, Transition, Word, execute, function_opcodes};
 use ananse_lift::{Register, lift};
@@ -15,8 +15,6 @@ use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING, opcode_index};
 use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks as Felt;
 
-/// The pop-two-push-one arithmetic operators, whose rows the address-binding family
-/// reads the height on. A tamper meant to isolate another family avoids their rows.
 fn is_arithmetic(opcode: OpCode) -> bool {
     matches!(
         opcode,
@@ -24,9 +22,6 @@ fn is_arithmetic(opcode: OpCode) -> bool {
     )
 }
 
-/// Runs `export(args)`, confirms the honest trace satisfies the AIR, then corrupts one
-/// limb of the operator's result on the value bus and confirms the break localizes to
-/// the operator's own row.
 fn assert_numeric_relation(
     fixture: &str,
     export: &str,
@@ -39,7 +34,7 @@ fn assert_numeric_relation(
         trace_and_rom_entry(&wat_from_file(fixture), &Entry::Export(export.into()), args);
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(
         failing_rows(&air, &main, &perm, challenges).is_empty(),
         "{export}{args:?}: honest trace violates the AIR"
@@ -63,7 +58,6 @@ fn assert_numeric_relation(
     );
 }
 
-/// Non-arithmetic real step carrying an active value-bus read, as `(row, slot_base)`.
 fn non_arithmetic_bus_read(trace: &Trace) -> Option<(usize, usize)> {
     let columns = trace.columns();
     (0..trace.steps())
@@ -78,7 +72,6 @@ fn non_arithmetic_bus_read(trace: &Trace) -> Option<(usize, usize)> {
         })
 }
 
-/// Active address-sorted-log entry, as `(row, entry_base)`.
 fn active_sorted_entry(trace: &Trace) -> Option<(usize, usize)> {
     let columns = trace.columns();
     (0..trace.length()).find_map(|r| {
@@ -89,8 +82,6 @@ fn active_sorted_entry(trace: &Trace) -> Option<(usize, usize)> {
     })
 }
 
-/// First real step carrying an active value-bus write, whose written value the
-/// range check decomposes.
 fn first_write_row(trace: &Trace) -> Option<usize> {
     let columns = trace.columns();
     (0..trace.steps()).find(|&r| {
@@ -109,7 +100,7 @@ fn every_single_frame_trace_satisfies_the_constraints() {
         let (trace, rom) = trace_and_rom(&wat_from_file(name));
         let air = air_for(&trace, &rom);
         let main = main_matrix(trace.columns(), trace.length());
-        let perm = permutation_of(&main, &rom, challenges);
+        let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
         let failing = failing_rows(&air, &main, &perm, challenges);
         assert!(failing.is_empty(), "{name}: {failing:?}");
     }
@@ -121,7 +112,7 @@ fn adding_a_second_hot_selector_breaks_one_hotness() {
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
 
     // Forcing a second hot selector on row 0---the padding selector, otherwise zero on
@@ -142,7 +133,7 @@ fn stalling_the_clock_breaks_the_increment() {
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
 
     // The clock advances by one every row; stalling it on row 1 makes row 0's
@@ -163,7 +154,7 @@ fn clearing_padding_in_the_halt_suffix_breaks_absorption() {
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
 
     // Padding is absorbing: clearing the padding selector on a row inside the halt
@@ -187,7 +178,7 @@ fn forging_an_opcode_breaks_the_control_flow_lookup() {
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
 
     // Move row 0's hot selector to a different opcode: one-hotness still holds, but the
@@ -214,7 +205,7 @@ fn forging_a_height_breaks_the_control_flow_lookup() {
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
 
     // The height rides the ROM edge. Nudging it on a non-first, non-arithmetic step
@@ -239,7 +230,7 @@ fn forging_a_bus_access_value_breaks_the_permutation() {
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
 
     let (row, base) = non_arithmetic_bus_read(&trace).expect("a non-arithmetic bus read");
@@ -259,7 +250,7 @@ fn dropping_a_bus_access_breaks_the_permutation() {
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
 
     let (row, base) = non_arithmetic_bus_read(&trace).expect("a non-arithmetic bus read");
@@ -279,7 +270,7 @@ fn forging_a_sorted_timestamp_breaks_the_permutation() {
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
 
     let (row, base) = active_sorted_entry(&trace).expect("an active sorted entry");
@@ -299,7 +290,7 @@ fn an_access_on_the_terminal_padding_row_is_rejected() {
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
 
     let last = trace.length() - 1;
@@ -319,7 +310,7 @@ fn corrupting_a_written_value_byte_fails_the_range_check() {
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
 
     let row = first_write_row(&trace).expect("a value-bus write");
@@ -339,7 +330,7 @@ fn corrupting_an_ordering_gap_byte_fails_the_range_check() {
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
 
     let mut columns = trace.columns().to_vec();
@@ -358,7 +349,7 @@ fn a_byte_outside_the_table_fails_the_lookup() {
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
     let air = air_for(&trace, &rom);
     let main = main_matrix(trace.columns(), trace.length());
-    let perm = permutation_of(&main, &rom, challenges);
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
     assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
 
     let row = first_write_row(&trace).expect("a value-bus write");
@@ -369,6 +360,29 @@ fn a_byte_outside_the_table_fails_the_lookup() {
     assert!(
         failing.contains(&row),
         "expected a row-{row} lookup violation, got {failing:?}"
+    );
+}
+
+#[test]
+fn a_forged_initial_value_fails_the_boundary_lookup() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom_entry(
+        &wat_from_file("func_add.wat"),
+        &Entry::Export("add".into()),
+        &[Word::I32(7), Word::I32(5)],
+    );
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, trace.initial_state(), challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    let mut forged_initial = trace.initial_state().to_vec();
+    forged_initial[0].1 = Felt::ZERO;
+    let forged_air = AnanseAir::new(&rom, trace.length(), trace.stack_base(), &forged_initial);
+    let failing = failing_rows(&forged_air, &main, &perm, challenges);
+    assert!(
+        failing.contains(&0),
+        "expected a row-0 boundary violation, got {failing:?}"
     );
 }
 
@@ -450,10 +464,6 @@ fn i64_sub_relation_holds_and_catches_a_wrong_result() {
     }
 }
 
-/// Every intra-body control-flow edge an execution actually takes must be a member of
-/// the program ROM the verifier reconstructs; otherwise the lookup that binds the trace
-/// to the module could not close. Terminal transitions (return, host exit) leave the
-/// body and are handled by the AIR's halt gating, not here.
 #[test]
 fn program_rom_contains_every_executed_edge() {
     let mut checked = 0usize;

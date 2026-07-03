@@ -10,10 +10,7 @@ use crate::{
     error as lift_error,
 };
 
-/// Upper bound on a function's register-file width. Real WebAssembly functions
-/// keep a handful of locals and a shallow operand stack; a function approaching
-/// this bound is pathological. The width maps directly to trace columns, so the
-/// lift rejects such a function rather than emit an unboundedly wide trace.
+/// Upper bound on a function's register-file width.
 const MAX_REGISTER_FILE_WIDTH: u32 = 4096;
 
 /// Placeholder target for a forward branch, patched to the real continuation
@@ -80,18 +77,12 @@ fn lift_function(
     lifter.finish()
 }
 
-/// Module-level facts the per-function lift needs: type arities, the function
-/// index space, and the code bodies.
+/// Module-level facts the per-function lift needs.
 struct ModuleInfo<'a> {
-    /// `(params, results)` arity per type index.
     type_arities: Vec<(u32, u32)>,
-    /// Type index per function index (imported functions first).
     func_type_idx: Vec<u32>,
-    /// Count of imported functions, which occupy the low function indices.
     num_imported_funcs: u32,
-    /// Count of module globals.
     num_globals: u32,
-    /// Defined function bodies, in code-section order.
     bodies: Vec<FunctionBody<'a>>,
 }
 
@@ -170,30 +161,18 @@ impl<'a> ModuleInfo<'a> {
 
 /// A WebAssembly structured-control frame, tracked as the lift walks a body.
 struct Frame {
-    /// Branch-target arity: values a branch carries to this label. Loops use
-    /// their input arity (the label is the loop header); all others use the
-    /// output arity (the label is past the matching `end`).
     in_arity: u32,
     out_arity: u32,
-    /// Operand-stack height at frame entry, below the frame's inputs.
     floor: u32,
-    /// Whether the current point in this frame is unreachable (dead code).
     unreachable: bool,
-    /// `Some(header_pc)` for a `loop`, whose branch target is its own header;
-    /// `None` for forward-closing frames.
     loop_header: Option<u32>,
-    /// Forward branches awaiting this frame's continuation, patched at `end`.
     fixups: Vec<Fixup>,
-    /// For an `if` frame, the `if` instruction whose `not_taken` target is still
-    /// pending an `else` or `end`.
     if_instr: Option<usize>,
 }
 
 /// A forward branch whose target becomes known when its frame closes.
 struct Fixup {
-    /// Index of the instruction whose successor target must be patched.
     instr: usize,
-    /// Which successor field of that instruction to patch.
     slot: Slot,
 }
 
@@ -318,9 +297,6 @@ impl<'a> Lifter<'a> {
         (0..n).try_for_each(|_| self.push_one())
     }
 
-    /// Pops one operand-stack slot, honouring the WASM validation rule that a
-    /// pop at the current frame's floor in unreachable code is polymorphic and
-    /// leaves the height unchanged.
     fn pop_one(&mut self) {
         let (floor, unreachable) = self
             .ctrl
@@ -341,9 +317,6 @@ impl<'a> Lifter<'a> {
         (0..n).for_each(|_| self.pop_one());
     }
 
-    /// Marks the current frame unreachable, resetting the height to its floor---
-    /// the WASM validation algorithm's treatment of code after an unconditional
-    /// branch, `return`, or `unreachable`.
     fn mark_unreachable(&mut self) {
         if let Some(frame) = self.ctrl.last_mut() {
             self.height = frame.floor;
@@ -400,8 +373,6 @@ impl<'a> Lifter<'a> {
         self.push(in_arity)
     }
 
-    /// Closes the top frame at the `end` whose program point is `end_pc`. Returns
-    /// `true` when the closed frame was the function frame.
     fn pop_ctrl(&mut self, end_pc: u32) -> Result<bool> {
         let frame = self
             .ctrl
@@ -460,8 +431,6 @@ impl<'a> Lifter<'a> {
         Ok(self.ctrl.is_empty())
     }
 
-    /// Resolves a branch to `relative_depth`, returning the target program point
-    /// and registering a fixup when the target frame closes forward.
     fn branch_target(&mut self, relative_depth: u32, instr: usize, slot: Slot) -> Result<u32> {
         let idx = self
             .ctrl

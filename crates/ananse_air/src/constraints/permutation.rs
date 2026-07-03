@@ -16,9 +16,6 @@ use p3_matrix::dense::RowMajorMatrix;
 use crate::bus::{BusSlot, SortedEntry};
 use crate::{AUX_BUS_ACC, AUX_SORTED_ACC, AirError, CHALLENGE_DENOM, CHALLENGE_FOLD, Ext, Result};
 
-/// Evaluates the two accumulator recurrences and their opening/closing boundary,
-/// binding the committed bus and sorted accumulators to the accesses recomputed from
-/// the main trace under the folding and denominator challenges.
 pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
     let main = builder.main();
     let local = main.current_slice();
@@ -86,9 +83,6 @@ pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
     builder.when_last_row().assert_zero_ext(balance);
 }
 
-/// Builds the two consistency-permutation columns---the execution-order value-bus
-/// accumulator and the address-sorted-log accumulator---from the main trace, folded
-/// by `fold` and denominated by `denom`.
 pub(crate) fn consistency_columns(
     main: &RowMajorMatrix<Felt>,
     denom: Ext,
@@ -108,9 +102,6 @@ pub(crate) fn consistency_columns(
     Ok((bus_acc, sorted_acc))
 }
 
-/// The value bus's contribution to the accumulator on one row: the sum of
-/// `1 / (denom - fold(access))` over the row's active slots, each access carrying its
-/// implicit `clk * BUS_SLOTS + slot` timestamp.
 fn bus_contribution(row: &[Felt], denom: Ext, fold: Ext) -> Result<Ext> {
     let clk = row[COL_CLK];
     (0..BUS_SLOTS).try_fold(Ext::ZERO, |acc, s| {
@@ -124,9 +115,6 @@ fn bus_contribution(row: &[Felt], denom: Ext, fold: Ext) -> Result<Ext> {
     })
 }
 
-/// The sorted log's contribution to the accumulator on one row: the sum of
-/// `1 / (denom - fold(access))` over the row's active entries, each carrying its own
-/// stored timestamp.
 fn sorted_contribution(row: &[Felt], denom: Ext, fold: Ext) -> Result<Ext> {
     (0..BUS_SLOTS).try_fold(Ext::ZERO, |acc, e| {
         let entry = SortedEntry::read(row, e);
@@ -145,8 +133,6 @@ fn sorted_contribution(row: &[Felt], denom: Ext, fold: Ext) -> Result<Ext> {
     })
 }
 
-/// Folds an access into one field element under `challenge`, laying its address,
-/// timestamp, two value limbs, and store flag in ascending powers.
 fn fold_access(challenge: Ext, addr: Felt, ts: Felt, lo: Felt, hi: Felt, is_write: Felt) -> Ext {
     [addr, ts, lo, hi, is_write]
         .into_iter()
@@ -154,18 +140,12 @@ fn fold_access(challenge: Ext, addr: Felt, ts: Felt, lo: Felt, hi: Felt, is_writ
         .fold(Ext::ZERO, |acc, term| acc * challenge + Ext::from(term))
 }
 
-/// The logderivative reciprocal `1 / (denom - folded)`, failing when the challenge
-/// collides with a folded access and leaves a zero denominator.
 fn reciprocal(denom: Ext, folded: Ext) -> Result<Ext> {
     (denom - folded)
         .try_inverse()
         .ok_or(AirError::DegenerateChallenge)
 }
 
-/// Asserts one side's accumulator advances by the sum of its active slots'
-/// reciprocals. The recurrence is cross-multiplied over the row's four denominators:
-/// `delta * prod(denom_s) = sum_s active_s * prod_{s' != s}(denom_s')`, a degree-five
-/// polynomial identity with no division.
 fn accumulate<AB: PermutationAirBuilder<F = Felt>>(
     builder: &mut AB,
     delta: AB::ExprEF,
@@ -188,9 +168,6 @@ fn accumulate<AB: PermutationAirBuilder<F = Felt>>(
         .assert_zero_ext(delta * full - numerator);
 }
 
-/// Folds an access into an extension-field constraint expression under `challenge`,
-/// the expression counterpart of [`fold_access`], recomputing the fold from the trace
-/// rather than trusting a committed column.
 fn fold_expr<AB: ExtensionBuilder<F = Felt>>(
     challenge: AB::ExprEF,
     terms: [AB::Expr; 5],

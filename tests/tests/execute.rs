@@ -40,6 +40,33 @@ fn completing_snippets() -> impl Iterator<Item = (&'static str, Vec<u8>)> {
         .map(|(name, wat)| (*name, wat_from_str(wat)))
 }
 
+fn assert_static_opcodes_match_records(name: &str, bytes: &[u8], checked: &mut usize) {
+    let module = Module::decode(bytes).expect("decode");
+    let bodies: Vec<(u32, Vec<OpCode>)> = lift(&module)
+        .expect("lift")
+        .functions
+        .iter()
+        .map(|f| {
+            (
+                f.func_index,
+                function_opcodes(&module, f.func_index).expect("classify body"),
+            )
+        })
+        .collect();
+    for record in records(bytes) {
+        let (_, body) = bodies
+            .iter()
+            .find(|(idx, _)| *idx == record.func_index)
+            .expect("executed function classified");
+        assert_eq!(
+            body[record.pc as usize], record.opcode,
+            "{name} fn{} pc{}: opcode",
+            record.func_index, record.pc
+        );
+        *checked += 1;
+    }
+}
+
 #[test]
 fn execution_is_deterministic() {
     for name in WAT_FILES {
@@ -81,35 +108,6 @@ fn records_agree_with_lift_schedule() {
         }
     }
     assert!(checked > 0, "no records were cross-checked");
-}
-
-/// Classifies every function body statically and confirms each executed record's
-/// opcode matches the static classification.
-fn assert_static_opcodes_match_records(name: &str, bytes: &[u8], checked: &mut usize) {
-    let module = Module::decode(bytes).expect("decode");
-    let bodies: Vec<(u32, Vec<OpCode>)> = lift(&module)
-        .expect("lift")
-        .functions
-        .iter()
-        .map(|f| {
-            (
-                f.func_index,
-                function_opcodes(&module, f.func_index).expect("classify body"),
-            )
-        })
-        .collect();
-    for record in records(bytes) {
-        let (_, body) = bodies
-            .iter()
-            .find(|(idx, _)| *idx == record.func_index)
-            .expect("executed function classified");
-        assert_eq!(
-            body[record.pc as usize], record.opcode,
-            "{name} fn{} pc{}: opcode",
-            record.func_index, record.pc
-        );
-        *checked += 1;
-    }
 }
 
 #[test]

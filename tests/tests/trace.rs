@@ -14,8 +14,6 @@ fn column(trace: &Trace, index: usize) -> &[Felt] {
     trace.column_at(index).expect("column in range")
 }
 
-/// Exactly one selector column is one on every row, and the selector block holds only
-/// zeros and ones.
 fn assert_selectors_one_hot(trace: &Trace, name: &str) {
     for row in 0..trace.length() {
         let hot = (0..NUM_SELECTORS)
@@ -32,9 +30,6 @@ fn assert_selectors_one_hot(trace: &Trace, name: &str) {
     }
 }
 
-/// Each operator's reads land on the value bus in consumption order: read `i` sits on
-/// slot `i` as an active load carrying the observed value---the agreement between the
-/// bus and the schedule the address binding then pins to a cell.
 fn assert_reads_land_on_the_bus(trace: &Trace, name: &str) {
     for (row, record) in trace.records().iter().enumerate() {
         for (index, read) in record.reads.iter().enumerate() {
@@ -56,8 +51,6 @@ fn assert_reads_land_on_the_bus(trace: &Trace, name: &str) {
     }
 }
 
-/// The program counter of the next row is the successor the transition selected; a
-/// fall-through advances it by one, a branch to its taken target.
 fn assert_pc_follows_transitions(trace: &Trace, name: &str) {
     let pc = column(trace, COL_PC);
     for (row, record) in trace.records().iter().enumerate() {
@@ -75,7 +68,6 @@ fn assert_pc_follows_transitions(trace: &Trace, name: &str) {
     }
 }
 
-/// The active sorted-log entries in flat `(row, slot)` order.
 fn active_sorted(trace: &Trace) -> Vec<(Felt, Felt, Felt, Felt, Felt)> {
     let mut entries = Vec::new();
     'outer: for row in 0..trace.length() {
@@ -96,9 +88,6 @@ fn active_sorted(trace: &Trace) -> Vec<(Felt, Felt, Felt, Felt, Felt)> {
     entries
 }
 
-/// The sorted log's `same_addr` flags agree with the addresses: the first entry opens
-/// a run, an entry marked continuing repeats the previous address, and one marked
-/// fresh differs.
 fn assert_sorted_log_consistent(trace: &Trace, name: &str) {
     let mut previous: Option<Felt> = None;
     for (addr, _, _, _, same_addr) in active_sorted(trace) {
@@ -157,7 +146,7 @@ fn recursive_and_cross_function_calls_are_unsupported() {
         execute(&module, entry, args, &mut host, &mut records).expect("execute");
         assert!(
             matches!(
-                Trace::build(&program, records),
+                Trace::build(&program, records, args, &[]),
                 Err(TraceError::UnsupportedCall)
             ),
             "{name}: expected UnsupportedCall"
@@ -173,7 +162,7 @@ fn entryless_module_produces_no_trace() {
     execute(&module, &Entry::Auto, &[], &mut NoHost, &mut records).expect("execute");
     assert!(records.is_empty());
     assert!(matches!(
-        Trace::build(&program, records),
+        Trace::build(&program, records, &[], &[]),
         Err(TraceError::EmptyExecution)
     ));
 }
@@ -186,9 +175,6 @@ fn store_then_load_round_trip_through_the_unified_log() {
             (i32.load (i32.const 8))))",
     ));
 
-    // The store and the load touch one linear-memory cell, so the sorted log holds
-    // exactly two entries at address 8: the store of 123, then a load that reads the
-    // same value back---read-consistency the permutation later enforces.
     let at_eight = active_sorted(&trace)
         .into_iter()
         .filter(|&(addr, ..)| addr == Felt::new(8))
@@ -221,7 +207,7 @@ fn padding_rests_on_the_exit_sentinel_with_an_idle_bus() {
         .expect("lifted")
         .instrs
         .len();
-    let trace = Trace::build(&program, records).expect("build");
+    let trace = Trace::build(&program, records, &[], &[]).expect("build");
 
     assert!(trace.length().is_power_of_two());
     assert!(
@@ -258,7 +244,7 @@ fn a_binary_op_carries_operands_and_result_on_its_own_row() {
         &mut records,
     )
     .expect("execute");
-    let trace = Trace::build(&program, records).expect("build");
+    let trace = Trace::build(&program, records, &[Word::I32(7), Word::I32(5)], &[]).expect("build");
 
     let add_row = trace
         .records()

@@ -1,29 +1,7 @@
 //! Program-ROM control-flow lookup: a logderivative (LogUp) accumulator.
 //!
 //! Every executed row moves the machine along one control-flow edge
-//! `(pc, opcode, next_pc, height, imm)`, packed into a single field element. The
-//! program ROM is the pinned set of edges the static lift permits. A logarithmic-
-//! derivative lookup (Häböck, 2022) proves the multiset of edges the trace takes is a
-//! sub-multiset of the ROM: over a verifier challenge `alpha`, the running grand sum
-//!
-//! ```text
-//!   S[i+1] - S[i] = m[i+1] / (alpha - t[i+1]) - 1 / (alpha - f[i+1])
-//! ```
-//!
-//! opens and closes at zero exactly when each edge `f` is a ROM entry `t` and the
-//! multiplicities `m` count the lookups. The recurrence is cross-multiplied to stay
-//! polynomial. Soundness is Schwartz-Zippel over the challenge, drawn from the
-//! quadratic extension so the base-field edges never collide with it.
-//!
-//! The witness is two of the permutation trace's columns---the per-entry
-//! multiplicities and the grand sum---assembled alongside the consistency
-//! permutation's accumulators by [`build_permutation_trace`](crate::build_permutation_trace).
-//! The looked-up edge `f` is recomputed from the main trace rather than stored, and
-//! the table value `t` rides a verifier-filled periodic column, so the ROM never
-//! enters the committed trace. Both columns carry a leading zero spacer: ROM entry
-//! `j` and its multiplicity sit on row `j + 1`, and the transition into that row
-//! absorbs them, which aligns the next-row indexing above with the edge the current
-//! row looks up.
+//! `(pc, opcode, next_pc, height, imm)`, packed into a single field element.
 
 use std::collections::HashMap;
 
@@ -38,9 +16,29 @@ use p3_matrix::dense::RowMajorMatrix;
 use crate::rom::{HEIGHT_PLACE, IMM_PLACE, NEXT_PC_PLACE, OPCODE_RADIX};
 use crate::{AUX_GRAND_SUM, AUX_MULTIPLICITY, AirError, CHALLENGE_CONTROL_FLOW, Ext, Result};
 
-/// The verifier-filled periodic column carrying the program ROM: row `i` holds ROM
-/// entry `i`, padded past the table's end with the first entry so the column spans
-/// the full trace. `length` is the padded trace height.
+pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
+    let main = builder.main();
+    let perm = builder.permutation();
+    let alpha: AB::ExprEF = builder.permutation_randomness()[CHALLENGE_CONTROL_FLOW].into();
+    let table: AB::ExprEF = Into::<AB::Expr>::into(builder.periodic_values()[0]).into();
+
+    let f: AB::ExprEF = edge_expr::<AB>(main.current_slice(), main.next_slice()).into();
+    let s_cur = perm.current_slice()[AUX_GRAND_SUM];
+    let s_next: AB::ExprEF = perm.next_slice()[AUX_GRAND_SUM].into();
+    let m_next: AB::ExprEF = perm.next_slice()[AUX_MULTIPLICITY].into();
+
+    let alpha_minus_f: AB::ExprEF = alpha.dup() - f;
+    let alpha_minus_t: AB::ExprEF = alpha - table;
+    let s_delta: AB::ExprEF = s_next - Into::<AB::ExprEF>::into(s_cur);
+    let lhs: AB::ExprEF = s_delta * alpha_minus_f.dup() * alpha_minus_t.dup();
+    let rhs: AB::ExprEF = m_next * alpha_minus_f - alpha_minus_t;
+    builder.when_transition().assert_zero_ext(lhs - rhs);
+
+    // The grand sum opens on the first row and closes on the last, both at zero.
+    builder.when_first_row().assert_zero_ext(s_cur);
+    builder.when_last_row().assert_zero_ext(s_cur);
+}
+
 pub fn periodic_table(rom: &[Felt], length: usize) -> Vec<Felt> {
     let pad = rom.first().copied().unwrap_or(Felt::ZERO);
     (0..length)
@@ -48,10 +46,6 @@ pub fn periodic_table(rom: &[Felt], length: usize) -> Vec<Felt> {
         .collect()
 }
 
-/// Builds the two control-flow-lookup columns---per-ROM-entry multiplicities and the
-/// running LogUp grand sum---binding each executed row's control-flow edge to the
-/// program `rom`, folded by the challenge `alpha`. The columns are assembled into the
-/// full permutation trace by [`build_permutation_trace`](crate::build_permutation_trace).
 pub(crate) fn control_flow_columns(
     main: &RowMajorMatrix<Felt>,
     rom: &[Felt],
@@ -119,35 +113,6 @@ pub(crate) fn control_flow_columns(
     Ok((multiplicity, grand_sum))
 }
 
-/// Evaluates the grand-sum recurrence and its opening/closing boundary, binding the
-/// committed multiplicity and grand sum to the edge recomputed from the main trace
-/// and the ROM value the periodic column carries.
-pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
-    let main = builder.main();
-    let perm = builder.permutation();
-    let alpha: AB::ExprEF = builder.permutation_randomness()[CHALLENGE_CONTROL_FLOW].into();
-    let table: AB::ExprEF = Into::<AB::Expr>::into(builder.periodic_values()[0]).into();
-
-    let f: AB::ExprEF = edge_expr::<AB>(main.current_slice(), main.next_slice()).into();
-    let s_cur = perm.current_slice()[AUX_GRAND_SUM];
-    let s_next: AB::ExprEF = perm.next_slice()[AUX_GRAND_SUM].into();
-    let m_next: AB::ExprEF = perm.next_slice()[AUX_MULTIPLICITY].into();
-
-    let alpha_minus_f: AB::ExprEF = alpha.dup() - f;
-    let alpha_minus_t: AB::ExprEF = alpha - table;
-    let s_delta: AB::ExprEF = s_next - Into::<AB::ExprEF>::into(s_cur);
-    let lhs: AB::ExprEF = s_delta * alpha_minus_f.dup() * alpha_minus_t.dup();
-    let rhs: AB::ExprEF = m_next * alpha_minus_f - alpha_minus_t;
-    builder.when_transition().assert_zero_ext(lhs - rhs);
-
-    // The grand sum opens on the first row and closes on the last, both at zero.
-    builder.when_first_row().assert_zero_ext(s_cur);
-    builder.when_last_row().assert_zero_ext(s_cur);
-}
-
-/// The packed schedule edge a row moves along, recomputed in the base field: the
-/// one-hot opcode index, the program counter and its successor, the operand-stack
-/// height, and the local/global offset, each scaled into its packing place.
 fn edge(current: &[Felt], next: &[Felt]) -> Felt {
     let opcode = (0..NUM_SELECTORS).fold(Felt::ZERO, |acc, k| {
         acc + current[SELECTOR_BASE + k] * Felt::new(k as u64)
@@ -159,9 +124,6 @@ fn edge(current: &[Felt], next: &[Felt]) -> Felt {
         + current[COL_IMM] * Felt::new(IMM_PLACE)
 }
 
-/// The same packed edge as a constraint expression over the main window, so the
-/// lookup side of the recurrence recomputes `f` from the trace rather than trusting a
-/// committed column.
 fn edge_expr<AB: AirBuilder<F = Felt>>(current: &[AB::Var], next: &[AB::Var]) -> AB::Expr {
     let opcode = (0..NUM_SELECTORS).fold(AB::Expr::ZERO, |acc, k| {
         acc + current[SELECTOR_BASE + k] * Felt::new(k as u64)

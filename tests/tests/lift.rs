@@ -3,9 +3,6 @@ use ananse_lift::{Register, Successors, lift};
 use ananse_tests::{WAT_FILES, WAT_SNIPPETS, wasm_features, wat_from_file, wat_from_str};
 use wasmparser::{Parser, ValidPayload, Validator};
 
-/// Operand-stack height entering each operator, per defined function, computed by
-/// wasmparser's own validator. This is the independent static ground truth the
-/// lift must reproduce.
 fn validator_heights(bytes: &[u8]) -> Vec<Vec<u32>> {
     let mut validator = Validator::new_with_features(wasm_features());
     let mut per_func = Vec::new();

@@ -16,9 +16,6 @@ use crate::{
     AUX_RC_CHANNEL_BASE, AUX_RC_MULT, AUX_RC_TABLE, AirError, CHALLENGE_RANGE, Ext, Result,
 };
 
-/// Evaluates the range-check family: the written-value and ordering-gap
-/// byte-decomposition identities on the main trace, and the byte-table LogUp binding
-/// every decomposition byte to the table.
 pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
     let main = builder.main();
     let local = main.current_slice();
@@ -86,9 +83,6 @@ pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
         .assert_zero_ext(sum_channels - Into::<AB::ExprEF>::into(sm_cur));
 }
 
-/// The verifier-filled periodic column carrying the 8-bit byte table: row `i` holds
-/// the byte value `i` for `i < 256`, and zero beyond, where the multiplicity is zero.
-/// `length` is the padded trace height.
 pub fn byte_table(length: usize) -> Vec<Felt> {
     (0..length)
         .map(|row| {
@@ -101,9 +95,6 @@ pub fn byte_table(length: usize) -> Vec<Felt> {
         .collect()
 }
 
-/// Builds the byte-table LogUp columns in permutation-trace order: the per-value
-/// multiplicity, the table-side running reciprocal, and one running reciprocal per
-/// byte channel (one channel per range-check witness column), all folded by `beta`.
 pub(crate) fn columns(main: &RowMajorMatrix<Felt>, beta: Ext) -> Result<Vec<Vec<Ext>>> {
     let height = main.height();
     let width = main.width();
@@ -160,8 +151,6 @@ pub(crate) fn columns(main: &RowMajorMatrix<Felt>, beta: Ext) -> Result<Vec<Vec<
         .collect())
 }
 
-/// The single value the row writes, low and high limb, selected off the value bus by
-/// each slot's `is_write * active`.
 fn written_value<AB: PermutationAirBuilder<F = Felt>>(local: &[AB::Var]) -> (AB::Expr, AB::Expr) {
     (0..BUS_SLOTS).fold(
         (AB::Expr::ZERO, AB::Expr::ZERO),
@@ -173,8 +162,6 @@ fn written_value<AB: PermutationAirBuilder<F = Felt>>(local: &[AB::Var]) -> (AB:
     )
 }
 
-/// The little-endian byte reconstruction `sum byte_i * 256^i` over `count` witness
-/// columns starting at `base`.
 fn decompose<AB: PermutationAirBuilder<F = Felt>>(
     local: &[AB::Var],
     base: usize,

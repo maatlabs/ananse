@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use ananse_air::{AnanseAir, Ext, NUM_CHALLENGES, build_permutation_trace, program_rom};
 use ananse_decoder::{ImportEntry, Module};
-use ananse_executor::{Entry, ExecuteError, Host, HostAction, Word, execute, function_opcodes};
+use ananse_executor::{
+    Entry, ExecuteError, Host, HostAction, Word, execute, function_opcodes, global_initializers,
+};
 use ananse_lift::lift;
 use ananse_trace::Trace;
 use p3_air::{Air, BaseAir, DebugConstraintBuilder};
@@ -29,9 +31,6 @@ pub const WAT_FILES: &[&str] = &[
     "memory.wat",
 ];
 
-/// Control-flow shapes the integer fixtures do not exercise: blocks with results,
-/// loop back-edges, forward and multi-way branches, `if`/`else`, and dead code
-/// after `return`, `br`, and `unreachable`.
 pub const WAT_SNIPPETS: &[(&str, &str)] = &[
     (
         "block_result",
@@ -71,11 +70,6 @@ pub const WAT_SNIPPETS: &[(&str, &str)] = &[
 
 pub const FIXTURES_DIR: &str = "../fixtures";
 
-/// Single-frame fixtures that execute from their automatic entry point and stay
-/// within one call frame, performing only register and linear-memory accesses that
-/// fit the value bus. `hello_world.wat` is excluded: its `fd_write` host call reads
-/// four arguments and writes one result in a single operator, a variable-arity host
-/// boundary handled alongside the call/return model rather than the register core.
 pub const SINGLE_FRAME_FIXTURES: &[&str] = &[
     "i32_const.wat",
     "func_add.wat",
@@ -86,21 +80,20 @@ pub const SINGLE_FRAME_FIXTURES: &[&str] = &[
     "i32_store.wat",
 ];
 
-/// Decodes, lifts, executes from the automatic entry point, and builds the trace.
 pub fn trace_of(bytes: &[u8]) -> Trace {
     let module = Module::decode(bytes).expect("decode");
     let program = lift(&module).expect("lift");
+    let globals = global_initializers(&module).expect("globals");
     let mut host = TestHost::default();
     let mut records = Vec::new();
     execute(&module, &Entry::Auto, &[], &mut host, &mut records).expect("execute");
-    Trace::build(&program, records).expect("build")
+    Trace::build(&program, records, &[], &globals).expect("build")
 }
 
-/// Decodes, lifts, executes, and builds both the trace and the packed program ROM
-/// the control-flow lookup binds against---the pair the two-segment AIR needs.
 pub fn trace_and_rom(bytes: &[u8]) -> (Trace, Vec<Felt>) {
     let module = Module::decode(bytes).expect("decode");
     let program = lift(&module).expect("lift");
+    let globals = global_initializers(&module).expect("globals");
     let mut host = TestHost::default();
     let mut records = Vec::new();
     execute(&module, &Entry::Auto, &[], &mut host, &mut records).expect("execute");
@@ -115,17 +108,14 @@ pub fn trace_and_rom(bytes: &[u8]) -> (Trace, Vec<Felt>) {
         .expect("executed function was lifted");
     let opcodes = function_opcodes(&module, func_index).expect("opcodes");
     let rom = program_rom(&opcodes, function).expect("program ROM");
-    let trace = Trace::build(&program, records).expect("build");
+    let trace = Trace::build(&program, records, &[], &globals).expect("build");
     (trace, rom)
 }
 
-/// Decodes, lifts, executes from an explicit entry point with explicit arguments,
-/// and builds both the trace and the packed program ROM. The `entry`/`args` form
-/// lets a test drive concrete operand values through an opcode the automatic entry
-/// point would otherwise run with zero-filled locals.
 pub fn trace_and_rom_entry(bytes: &[u8], entry: &Entry, args: &[Word]) -> (Trace, Vec<Felt>) {
     let module = Module::decode(bytes).expect("decode");
     let program = lift(&module).expect("lift");
+    let globals = global_initializers(&module).expect("globals");
     let mut host = TestHost::default();
     let mut records = Vec::new();
     execute(&module, entry, args, &mut host, &mut records).expect("execute");
@@ -140,13 +130,10 @@ pub fn trace_and_rom_entry(bytes: &[u8], entry: &Entry, args: &[Word]) -> (Trace
         .expect("executed function was lifted");
     let opcodes = function_opcodes(&module, func_index).expect("opcodes");
     let rom = program_rom(&opcodes, function).expect("program ROM");
-    let trace = Trace::build(&program, records).expect("build");
+    let trace = Trace::build(&program, records, args, &globals).expect("build");
     (trace, rom)
 }
 
-/// A deterministic host realizing the two WASI imports Ananse admits: `fd_write`
-/// appends each io-vector's bytes to a journal and reports the count written;
-/// `proc_exit` halts with its status code.
 #[derive(Default)]
 pub struct TestHost {
     pub journal: Vec<u8>,
@@ -201,8 +188,6 @@ fn write_u32(memory: &mut [u8], at: usize, value: u32) {
     memory[at..at + 4].copy_from_slice(&value.to_le_bytes());
 }
 
-/// The decoder's restricted feature set, replicated so the validator oracle sees
-/// exactly the subset the lift is built for.
 pub fn wasm_features() -> WasmFeatures {
     let mut f = WasmFeatures::empty();
     f.insert(WasmFeatures::MUTABLE_GLOBAL);
@@ -224,28 +209,31 @@ pub fn wat_from_str(wat: &str) -> Vec<u8> {
     wat::parse_str(wat).expect("WAT assembles to WASM")
 }
 
-/// Builds the register-shaped AIR for `trace` and its program ROM, ready for
-/// row-by-row constraint evaluation.
 pub fn air_for(trace: &Trace, rom: &[Felt]) -> AnanseAir {
-    AnanseAir::new(rom, trace.length(), trace.stack_base())
+    AnanseAir::new(
+        rom,
+        trace.length(),
+        trace.stack_base(),
+        trace.initial_state(),
+    )
 }
 
 /// Fixed stand-ins for the Fiat--Shamir permutation challenges the prover draws,
-/// letting the control-flow lookup, consistency permutation, and range-check
-/// byte-table lookup be exercised without a prover, in [`NUM_CHALLENGES`] order: the
-/// control-flow folding challenge, the consistency permutation's denominator and
-/// access-folding challenges, and the byte-table challenge.
+/// letting the control-flow lookup, consistency permutation, range-check byte-table
+/// lookup, and boundary lookup be exercised without a prover, in [`NUM_CHALLENGES`]
+/// order: the control-flow folding challenge, the consistency permutation's
+/// denominator and access-folding challenges, the byte-table challenge, and the
+/// boundary lookup's denominator.
 pub fn mock_challenges() -> [Ext; NUM_CHALLENGES] {
     [
         Ext::from(Felt::new(0x9e37_79b9_7f4a_7c15)),
         Ext::from(Felt::new(0xff51_afd7_ed55_8ccd)),
         Ext::from(Felt::new(0xc4ce_b9fe_1a85_ec53)),
         Ext::from(Felt::new(0xbf58_476d_1ce4_e5b9)),
+        Ext::from(Felt::new(0x94d0_49bb_1331_11eb)),
     ]
 }
 
-/// Packs the column-major trace into the row-major main matrix the constraint
-/// evaluator reads.
 pub fn main_matrix(columns: &[Vec<Felt>], length: usize) -> RowMajorMatrix<Felt> {
     let width = columns.len();
     let values = (0..length)
@@ -254,14 +242,13 @@ pub fn main_matrix(columns: &[Vec<Felt>], length: usize) -> RowMajorMatrix<Felt>
     RowMajorMatrix::new(values, width)
 }
 
-/// Builds the permutation trace binding `main`'s control flow to `rom` and its value
-/// bus to its sorted access log, under the permutation `challenges`.
 pub fn permutation_of(
     main: &RowMajorMatrix<Felt>,
     rom: &[Felt],
+    initial: &[(u64, Felt, Felt)],
     challenges: [Ext; NUM_CHALLENGES],
 ) -> RowMajorMatrix<Ext> {
-    build_permutation_trace(main, rom, challenges).expect("permutation trace")
+    build_permutation_trace(main, rom, initial, challenges).expect("permutation trace")
 }
 
 /// Evaluates every AIR constraint on each row of `main` paired with the permutation

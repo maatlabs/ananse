@@ -9,10 +9,6 @@ use crate::{ExecuteError, OpCode, Result, Word, error as exec_error};
 /// Bytes per WebAssembly memory page.
 pub(crate) const PAGE_SIZE: usize = 65536;
 
-/// The [`OpCode`] of every operator in a defined function's body, indexed by
-/// program point: `function_opcodes(module, func_index)[pc]` is the operator at
-/// program point `pc`. `func_index` is the module function index space (imported
-/// functions occupy the low indices).
 pub fn function_opcodes(module: &Module, func_index: u32) -> Result<Vec<OpCode>> {
     let image = Image::parse(module.bytes())?;
     let func = image
@@ -23,7 +19,10 @@ pub fn function_opcodes(module: &Module, func_index: u32) -> Result<Vec<OpCode>>
     func.ops.iter().map(operator_to_opcode).collect()
 }
 
-/// Maps a validated [Operator] into its [`OpCode`].
+pub fn global_initializers(module: &Module) -> Result<Vec<Word>> {
+    Ok(Image::parse(module.bytes())?.globals)
+}
+
 fn operator_to_opcode(op: &Operator) -> Result<OpCode> {
     let opcode = match op {
         Operator::Unreachable => OpCode::Unreachable,
@@ -152,15 +151,12 @@ pub(crate) struct Image<'a> {
     pub(crate) max_pages: Option<u64>,
 }
 
-/// A function signature reduced to what execution needs: parameter types and a
-/// result count.
 pub(crate) struct FnType {
     pub(crate) params: Vec<ValTy>,
     pub(crate) results: u32,
 }
 
-/// A defined function's executable image: its operators, the declared-local
-/// types, and the program point of each structured block's matching `end`.
+/// A defined function's executable image.
 pub(crate) struct FuncImage<'a> {
     pub(crate) func_index: u32,
     pub(crate) type_idx: u32,
@@ -415,8 +411,6 @@ fn block_ends(ops: &[Operator]) -> Result<Vec<u32>> {
     Ok(ends)
 }
 
-/// Evaluates a constant initializer expression to a single value. Ananse's subset
-/// admits only `i32.const` / `i64.const` initializers.
 fn eval_const(expr: &ConstExpr) -> Result<Word> {
     let mut reader = expr.get_operators_reader();
     let value = match reader.read().map_err(exec_error::malformed)? {

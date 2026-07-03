@@ -5,9 +5,6 @@
 //! constrained against the one before it: the active entries form a prefix (no real
 //! access hides behind a padding entry), entries that share an address agree on it,
 //! and a read of a continuing address returns the value the previous access left.
-//! Together with the permutation tying this log to the execution-order bus, that is
-//! what makes every operand-stack, local, global, and memory read return the value
-//! last written to its cell.
 
 use ananse_trace::layout::BUS_SLOTS;
 use p3_air::AirBuilder;
@@ -16,7 +13,6 @@ use p3_goldilocks::Goldilocks as Felt;
 
 use crate::bus::SortedEntry;
 
-/// Evaluates the read-consistency residuals on the `local`/`next` row pair.
 pub(crate) fn evaluate<AB: AirBuilder<F = Felt>>(
     builder: &mut AB,
     local: &[AB::Var],
