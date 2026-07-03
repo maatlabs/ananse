@@ -231,14 +231,16 @@ pub fn air_for(trace: &Trace, rom: &[Felt]) -> AnanseAir {
 }
 
 /// Fixed stand-ins for the Fiat--Shamir permutation challenges the prover draws,
-/// letting the control-flow lookup and consistency permutation be exercised without a
-/// prover: the control-flow folding challenge, then the consistency permutation's
-/// denominator and access-folding challenges, in [`NUM_CHALLENGES`] order.
+/// letting the control-flow lookup, consistency permutation, and range-check
+/// byte-table lookup be exercised without a prover, in [`NUM_CHALLENGES`] order: the
+/// control-flow folding challenge, the consistency permutation's denominator and
+/// access-folding challenges, and the byte-table challenge.
 pub fn mock_challenges() -> [Ext; NUM_CHALLENGES] {
     [
         Ext::from(Felt::new(0x9e37_79b9_7f4a_7c15)),
         Ext::from(Felt::new(0xff51_afd7_ed55_8ccd)),
         Ext::from(Felt::new(0xc4ce_b9fe_1a85_ec53)),
+        Ext::from(Felt::new(0xbf58_476d_1ce4_e5b9)),
     ]
 }
 

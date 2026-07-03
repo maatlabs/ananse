@@ -10,12 +10,12 @@
 
 use ananse_executor::{RegAccess, StepRecord, Transition};
 use ananse_lift::{LiftedFunction, LiftedProgram, Register, Successors};
-use p3_field::PrimeCharacteristicRing;
+use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks as Felt;
 
 use crate::layout::{
-    self, BUS_SLOTS, COL_CLK, COL_HEIGHT, COL_IMM, COL_PC, REGISTER_REGION, SELECTOR_BASE,
-    bus_slot, slot, sorted, sorted_slot,
+    self, BUS_SLOTS, COL_CLK, COL_HEIGHT, COL_IMM, COL_PC, GAP_BYTES, LIMB_BYTES, RC_WRITE_HI,
+    RC_WRITE_LO, REGISTER_REGION, SELECTOR_BASE, bus_slot, rc_gap, slot, sorted, sorted_slot,
 };
 use crate::selector::{SEL_PADDING, opcode_index};
 use crate::{Result, TraceError};
@@ -277,6 +277,7 @@ fn build_columns(
     let steps = records.len();
     let length = steps
         .max(edge_count)
+        .max(layout::RANGE_TABLE_SIZE)
         .saturating_add(1)
         .max(MIN_TRACE_ROWS)
         .next_power_of_two();
@@ -295,11 +296,14 @@ fn build_columns(
         columns[COL_HEIGHT][row] = Felt::new(u64::from(height));
         columns[COL_IMM][row] = Felt::new(immediate_offset(record, exec_frame)?);
         columns[SELECTOR_BASE + opcode_index(record.opcode)][row] = Felt::ONE;
-        for (index, access) in row_accesses(row, record, exec_frame)?
-            .into_iter()
-            .enumerate()
-        {
-            write_bus_slot(&mut columns, bus_slot(index), row, access);
+        let row_accesses = row_accesses(row, record, exec_frame)?;
+        for (index, access) in row_accesses.iter().enumerate() {
+            write_bus_slot(&mut columns, bus_slot(index), row, *access);
+        }
+
+        if let Some(write) = row_accesses.iter().find(|access| access.is_write) {
+            write_value_bytes(&mut columns, RC_WRITE_LO, row, write.lo);
+            write_value_bytes(&mut columns, RC_WRITE_HI, row, write.hi);
         }
     }
 
@@ -309,9 +313,18 @@ fn build_columns(
         *clock = Felt::new((steps + offset) as u64);
     }
 
-    fill_sorted_log(&mut columns, accesses);
+    fill_sorted_log(&mut columns, accesses)?;
 
     Ok((columns, steps, length))
+}
+
+/// Byte-decomposes a value limb into its [`LIMB_BYTES`] little-endian bytes on the
+/// range-check witness columns starting at `base`.
+fn write_value_bytes(columns: &mut [Vec<Felt>], base: usize, row: usize, value: Felt) {
+    let value = value.as_canonical_u64();
+    for byte in 0..LIMB_BYTES {
+        columns[base + byte][row] = Felt::new((value >> (8 * byte)) & 0xff);
+    }
 }
 
 /// Writes one access onto its value-bus slot.
@@ -323,12 +336,12 @@ fn write_bus_slot(columns: &mut [Vec<Felt>], base: usize, row: usize, access: Ac
     columns[base + slot::ACTIVE][row] = Felt::ONE;
 }
 
-/// Lays the address-sorted access log across the trace, [`BUS_SLOTS`] entries per row.
-fn fill_sorted_log(columns: &mut [Vec<Felt>], accesses: &[Access]) {
+/// Lays the address-sorted access log across the trace, [`BUS_SLOTS`] entries per row,
+/// and byte-decomposes each consecutive pair's ordering gap for the sortedness range check.
+fn fill_sorted_log(columns: &mut [Vec<Felt>], accesses: &[Access]) -> Result<()> {
     let mut sorted = accesses.to_vec();
     sorted.sort_by_key(|a| (a.address, a.timestamp));
 
-    let mut previous: Option<u64> = None;
     for (position, access) in sorted.iter().enumerate() {
         let (row, slot_index) = (position / BUS_SLOTS, position % BUS_SLOTS);
         let base = sorted_slot(slot_index);
@@ -338,9 +351,30 @@ fn fill_sorted_log(columns: &mut [Vec<Felt>], accesses: &[Access]) {
         columns[base + sorted::HI][row] = access.hi;
         columns[base + sorted::IS_WRITE][row] = boolean(access.is_write);
         columns[base + sorted::ACTIVE][row] = Felt::ONE;
-        columns[base + sorted::SAME_ADDR][row] = boolean(previous == Some(access.address));
-        previous = Some(access.address);
+
+        let Some(&prev) = sorted
+            .get(position.wrapping_sub(1))
+            .filter(|_| position > 0)
+        else {
+            continue;
+        };
+        let same_addr = prev.address == access.address;
+        columns[base + sorted::SAME_ADDR][row] = boolean(same_addr);
+
+        let gap = if same_addr {
+            access.timestamp.checked_sub(prev.timestamp)
+        } else {
+            access.address.checked_sub(prev.address)
+        }
+        .and_then(|diff| diff.checked_sub(1))
+        .ok_or(TraceError::AccessLogNotStrictlyOrdered { position })?;
+        let (gap_row, pair) = ((position - 1) / BUS_SLOTS, (position - 1) % BUS_SLOTS);
+        let gap_base = rc_gap(pair);
+        for byte in 0..GAP_BYTES {
+            columns[gap_base + byte][gap_row] = Felt::new((gap >> (8 * byte)) & 0xff);
+        }
     }
+    Ok(())
 }
 
 /// A Boolean value; One if `flag`, zero otherwise.

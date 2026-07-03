@@ -53,4 +53,12 @@ pub enum TraceError {
         /// The step (row index) of the disagreeing read.
         step: usize,
     },
+
+    /// A sorted-log entry failed to strictly exceed its predecessor in
+    /// `(address, timestamp)` order, so an ordering gap underflowed.
+    #[error("sorted access log is not strictly ordered at position {position}")]
+    AccessLogNotStrictlyOrdered {
+        /// The sorted-log position that failed to exceed its predecessor.
+        position: usize,
+    },
 }

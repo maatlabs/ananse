@@ -8,7 +8,8 @@ use ananse_tests::{
 };
 use ananse_trace::Trace;
 use ananse_trace::layout::{
-    BUS_SLOTS, COL_CLK, COL_HEIGHT, SELECTOR_BASE, bus_slot, slot, sorted, sorted_slot,
+    BUS_SLOTS, COL_CLK, COL_HEIGHT, RC_WRITE_LO, SELECTOR_BASE, bus_slot, rc_gap, slot, sorted,
+    sorted_slot,
 };
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING, opcode_index};
 use p3_field::PrimeCharacteristicRing;
@@ -84,6 +85,19 @@ fn active_sorted_entry(trace: &Trace) -> Option<(usize, usize)> {
         (0..BUS_SLOTS).find_map(|s| {
             let base = sorted_slot(s);
             (columns[base + sorted::ACTIVE][r] == Felt::ONE).then_some((r, base))
+        })
+    })
+}
+
+/// First real step carrying an active value-bus write, whose written value the
+/// range check decomposes.
+fn first_write_row(trace: &Trace) -> Option<usize> {
+    let columns = trace.columns();
+    (0..trace.steps()).find(|&r| {
+        (0..BUS_SLOTS).any(|s| {
+            let base = bus_slot(s);
+            columns[base + slot::ACTIVE][r] == Felt::ONE
+                && columns[base + slot::IS_WRITE][r] == Felt::ONE
         })
     })
 }
@@ -296,6 +310,65 @@ fn an_access_on_the_terminal_padding_row_is_rejected() {
     assert!(
         failing.contains(&last),
         "expected a row-{last} padding-gate violation, got {failing:?}"
+    );
+}
+
+#[test]
+fn corrupting_a_written_value_byte_fails_the_range_check() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    let row = first_write_row(&trace).expect("a value-bus write");
+    let mut columns = trace.columns().to_vec();
+    columns[RC_WRITE_LO][row] += Felt::ONE;
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, challenges);
+    assert!(
+        failing.contains(&row),
+        "expected a row-{row} range violation, got {failing:?}"
+    );
+}
+
+#[test]
+fn corrupting_an_ordering_gap_byte_fails_the_range_check() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    let mut columns = trace.columns().to_vec();
+    columns[rc_gap(0)][0] += Felt::ONE;
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, challenges);
+    assert!(
+        failing.contains(&0),
+        "expected a row-0 range violation, got {failing:?}"
+    );
+}
+
+#[test]
+fn a_byte_outside_the_table_fails_the_lookup() {
+    let challenges = mock_challenges();
+    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, challenges);
+    assert!(failing_rows(&air, &main, &perm, challenges).is_empty());
+
+    let row = first_write_row(&trace).expect("a value-bus write");
+    let mut columns = trace.columns().to_vec();
+    columns[RC_WRITE_LO][row] = Felt::new(256);
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, challenges);
+    assert!(
+        failing.contains(&row),
+        "expected a row-{row} lookup violation, got {failing:?}"
     );
 }
 

@@ -119,13 +119,49 @@ pub const fn witness_base() -> usize {
     SELECTOR_BASE + NUM_SELECTORS
 }
 
-/// Total number of main-trace columns: the control columns, the value bus, the
-/// sorted log, the selectors, and the [`WITNESS_COLS`] arithmetic-witness columns.
-pub const fn main_width() -> usize {
-    witness_base() + WITNESS_COLS
-}
-
 /// Arithmetic-witness columns shared by the value-bus opcode families. The widest
 /// consumer is 64-bit multiplication, whose four 32-bit partial-product limbs and
 /// two carry limbs pin the full 128-bit product before it is truncated.
 pub const WITNESS_COLS: usize = 6;
+
+/// Entries in the range-check byte table: the 8-bit alphabet `{0, ..., 255}`.
+pub const RANGE_TABLE_SIZE: usize = 256;
+
+/// Bytes decomposing one 32-bit value limb in the written-value range check. Four
+/// bytes span the full `[0, 2^32)` limb range.
+pub const LIMB_BYTES: usize = 4;
+
+/// Bytes decomposing one sortedness ordering gap. Five bytes span `[0, 2^40)`,
+/// comfortably above the maximum gap in the unified address space (below `2^33`, the
+/// jump from linear memory in `[0, 2^32)` to the register file at `2^32`) yet far
+/// below the Goldilocks prime.
+pub const GAP_BYTES: usize = 5;
+
+/// First column of the range-check witness block, immediately after the arithmetic
+/// witnesses: the written value's low- and high-limb bytes, then the per-pair
+/// ordering-gap bytes.
+pub const RANGE_BASE: usize = SELECTOR_BASE + NUM_SELECTORS + WITNESS_COLS;
+
+/// First byte column of the written value's low limb.
+pub const RC_WRITE_LO: usize = RANGE_BASE;
+/// First byte column of the written value's high limb.
+pub const RC_WRITE_HI: usize = RANGE_BASE + LIMB_BYTES;
+/// First byte column of the ordering-gap decompositions, one [`GAP_BYTES`]-wide group
+/// per consecutive sorted pair.
+pub const RC_GAP_BASE: usize = RANGE_BASE + 2 * LIMB_BYTES;
+
+/// First byte column of the ordering-gap decomposition for sorted pair `pair`
+/// (`pair < BUS_SLOTS`).
+pub const fn rc_gap(pair: usize) -> usize {
+    RC_GAP_BASE + pair * GAP_BYTES
+}
+
+/// Range-check witness columns: two value limbs' bytes plus one gap decomposition per
+/// consecutive sorted pair.
+pub const RANGE_COLS: usize = 2 * LIMB_BYTES + BUS_SLOTS * GAP_BYTES;
+
+/// Total number of main-trace columns: the control columns, the value bus, the sorted
+/// log, the selectors, the arithmetic-witness columns, and the range-check bytes.
+pub const fn main_width() -> usize {
+    RANGE_BASE + RANGE_COLS
+}
