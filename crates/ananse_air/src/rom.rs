@@ -5,7 +5,7 @@ use core::iter::once;
 use ananse_executor::OpCode;
 use ananse_lift::{LiftedFunction, Register, Successors};
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING, opcode_index};
-use maat_field::Felt;
+use p3_goldilocks::Goldilocks as Felt;
 
 use crate::AirError;
 

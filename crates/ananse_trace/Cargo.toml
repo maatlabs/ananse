@@ -15,5 +15,6 @@ readme = "../../README.md"
 ananse_lift = { workspace = true }
 ananse_executor = { workspace = true }
 
-maat_field = { workspace = true }
+p3-field = { workspace = true }
+p3-goldilocks = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }

@@ -1,4 +1,4 @@
-use maat_field::Felt;
+use p3_goldilocks::Goldilocks as Felt;
 
 use crate::Trap;
 

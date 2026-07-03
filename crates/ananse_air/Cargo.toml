@@ -16,7 +16,8 @@ ananse_executor = { workspace = true }
 ananse_lift = { workspace = true }
 ananse_trace = { workspace = true }
 
-maat_air = { workspace = true }
-maat_field = { workspace = true }
+p3-air = { workspace = true }
+p3-field = { workspace = true }
+p3-goldilocks = { workspace = true }
+p3-matrix = { workspace = true }
 thiserror = { workspace = true }
-winter-air = { workspace = true }

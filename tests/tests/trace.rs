@@ -7,7 +7,8 @@ use ananse_trace::layout::{
 };
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING};
 use ananse_trace::{Trace, TraceError};
-use maat_field::{Felt, FieldElement};
+use p3_field::PrimeCharacteristicRing;
+use p3_goldilocks::Goldilocks as Felt;
 
 fn column(trace: &Trace, index: usize) -> &[Felt] {
     trace.column_at(index).expect("column in range")

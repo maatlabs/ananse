@@ -5,7 +5,8 @@ use ananse_executor::{
 };
 use ananse_lift::{Register, lift};
 use ananse_tests::{TestHost, WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
-use maat_field::{Felt, FieldElement};
+use p3_field::PrimeCharacteristicRing;
+use p3_goldilocks::Goldilocks as Felt;
 
 /// Runs a module from its automatic entry point, collecting the record stream.
 fn records(bytes: &[u8]) -> Vec<StepRecord> {

@@ -10,7 +10,8 @@
 
 use ananse_executor::{RegAccess, StepRecord, Transition};
 use ananse_lift::{LiftedFunction, LiftedProgram, Register, Successors};
-use maat_field::{Felt, FieldElement};
+use p3_field::PrimeCharacteristicRing;
+use p3_goldilocks::Goldilocks as Felt;
 
 use crate::layout::{
     self, BUS_SLOTS, COL_CLK, COL_HEIGHT, COL_IMM, COL_PC, REGISTER_REGION, SELECTOR_BASE,
@@ -19,7 +20,8 @@ use crate::layout::{
 use crate::selector::{SEL_PADDING, opcode_index};
 use crate::{Result, TraceError};
 
-/// Winterfell's minimum trace length.
+/// The smallest padded trace height, so the low-degree extension has room for the
+/// FRI blowup and query positions on the shortest programs.
 const MIN_TRACE_ROWS: usize = 8;
 
 /// Register-file dimensions of the executing frame, used to resolve a register

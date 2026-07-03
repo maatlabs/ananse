@@ -1,26 +1,25 @@
-//! Field-expression views over a constraint row's value bus and sorted access log.
+//! Column views over a constraint row's value bus and sorted access log.
 
 use ananse_trace::layout::{bus_slot, slot, sorted, sorted_slot};
-use maat_field::FieldElement;
 
 /// One value-bus slot's columns, read out of a constraint row.
 #[derive(Clone, Copy)]
-pub(crate) struct BusSlot<E> {
+pub(crate) struct BusSlot<V> {
     /// Access address in the unified space.
-    pub addr: E,
+    pub addr: V,
     /// Low limb of the accessed value.
-    pub lo: E,
+    pub lo: V,
     /// High limb of the accessed value.
-    pub hi: E,
+    pub hi: V,
     /// One on a write access, zero on a read.
-    pub is_write: E,
+    pub is_write: V,
     /// One when the slot carries a real access.
-    pub active: E,
+    pub active: V,
 }
 
-impl<E: FieldElement> BusSlot<E> {
+impl<V: Copy> BusSlot<V> {
     /// Reads value-bus slot `index` from `row`.
-    pub(crate) fn read(row: &[E], index: usize) -> Self {
+    pub(crate) fn read(row: &[V], index: usize) -> Self {
         let base = bus_slot(index);
         Self {
             addr: row[base + slot::ADDR],
@@ -32,26 +31,26 @@ impl<E: FieldElement> BusSlot<E> {
     }
 }
 
-/// One sorted-log entry's columns, read out of a constraint row.
+/// One address-sorted log entry's columns, read out of a constraint row.
 #[derive(Clone, Copy)]
-pub(crate) struct SortedEntry<E> {
+pub(crate) struct SortedEntry<V> {
     /// Access address; entries are laid in non-decreasing address order.
-    pub addr: E,
+    pub addr: V,
     /// Low limb of the accessed value.
-    pub lo: E,
+    pub lo: V,
     /// High limb of the accessed value.
-    pub hi: E,
+    pub hi: V,
     /// One on a write access, zero on a read.
-    pub is_write: E,
+    pub is_write: V,
     /// One when the entry is real, zero when it pads the log's tail.
-    pub active: E,
+    pub active: V,
     /// One when this entry continues the previous entry's address.
-    pub same_addr: E,
+    pub same_addr: V,
 }
 
-impl<E: FieldElement> SortedEntry<E> {
+impl<V: Copy> SortedEntry<V> {
     /// Reads sorted-log entry `index` from `row`.
-    pub(crate) fn read(row: &[E], index: usize) -> Self {
+    pub(crate) fn read(row: &[V], index: usize) -> Self {
         let base = sorted_slot(index);
         Self {
             addr: row[base + sorted::ADDR],

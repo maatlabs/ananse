@@ -2,16 +2,17 @@
 
 use std::path::{Path, PathBuf};
 
-use ananse_air::{
-    AUX_WIDTH, Air, AnanseAir, AnansePublicInputs, AuxRandElements, BatchingMethod,
-    EvaluationFrame, FieldExtension, NUM_AUX_CONSTRAINTS, NUM_AUX_RANDS, ProofOptions, TraceInfo,
-    build_aux_columns, periodic_table, program_rom,
-};
+use ananse_air::{AnanseAir, Ext, build_permutation_trace, program_rom};
 use ananse_decoder::{ImportEntry, Module};
 use ananse_executor::{Entry, ExecuteError, Host, HostAction, Word, execute, function_opcodes};
 use ananse_lift::lift;
 use ananse_trace::Trace;
-use maat_field::{Felt, FieldElement};
+use p3_air::{Air, BaseAir, DebugConstraintBuilder};
+use p3_field::PrimeCharacteristicRing;
+use p3_goldilocks::Goldilocks as Felt;
+use p3_matrix::Matrix;
+use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
+use p3_matrix::stack::ViewPair;
 use wasmparser::WasmFeatures;
 
 pub const WAT_FILES: &[&str] = &[
@@ -223,119 +224,86 @@ pub fn wat_from_str(wat: &str) -> Vec<u8> {
     wat::parse_str(wat).expect("WAT assembles to WASM")
 }
 
-/// Builds the two-segment register-shaped AIR for `trace` and its program ROM with
-/// development-grade proof options, ready for direct constraint evaluation.
-pub fn air_for(trace: &Trace, program: Vec<Felt>) -> AnanseAir {
-    let trace_info = TraceInfo::new_multi_segment(
-        trace.width(),
-        AUX_WIDTH,
-        NUM_AUX_RANDS,
-        trace.length(),
-        vec![],
-    );
-    let options = ProofOptions::new(
-        27,
-        8,
-        0,
-        FieldExtension::None,
-        4,
-        255,
-        BatchingMethod::Algebraic,
-        BatchingMethod::Algebraic,
-    );
-    AnanseAir::new(
-        trace_info,
-        AnansePublicInputs::new(program, trace.stack_base()),
-        options,
-    )
+/// Builds the register-shaped AIR for `trace` and its program ROM, ready for
+/// row-by-row constraint evaluation.
+pub fn air_for(trace: &Trace, rom: &[Felt]) -> AnanseAir {
+    AnanseAir::new(rom, trace.length(), trace.stack_base())
 }
 
-/// Builds the auxiliary LogUp columns for `main_columns` against `rom` under the
-/// mock challenge `alpha`, then evaluates the auxiliary transition constraint on
-/// every row, returning the rows whose residual does not vanish.
-pub fn aux_violations(
-    air: &AnanseAir,
-    main_columns: &[Vec<Felt>],
+/// A fixed stand-in for the Fiat--Shamir folding challenge the prover draws, letting
+/// the control-flow lookup be exercised without a prover.
+pub fn mock_challenge() -> Ext {
+    Ext::from(Felt::new(0x9e37_79b9_7f4a_7c15))
+}
+
+/// Packs the column-major trace into the row-major main matrix the constraint
+/// evaluator reads.
+pub fn main_matrix(columns: &[Vec<Felt>], length: usize) -> RowMajorMatrix<Felt> {
+    let width = columns.len();
+    let values = (0..length)
+        .flat_map(|row| columns.iter().map(move |column| column[row]))
+        .collect();
+    RowMajorMatrix::new(values, width)
+}
+
+/// Builds the LogUp permutation trace binding `main`'s control flow to `rom` under
+/// `challenge`.
+pub fn permutation_of(
+    main: &RowMajorMatrix<Felt>,
     rom: &[Felt],
-    length: usize,
-    alpha: Felt,
-) -> Vec<usize> {
-    let aux = build_aux_columns(main_columns, rom, length, alpha).expect("aux columns");
-    let table = periodic_table(rom, length);
-    aux_residuals(air, main_columns, &aux, &table, length, alpha)
+    challenge: Ext,
+) -> RowMajorMatrix<Ext> {
+    build_permutation_trace(main, rom, challenge).expect("permutation trace")
 }
 
-/// Evaluates the auxiliary transition constraint on every row against explicitly
-/// supplied auxiliary `aux_columns` and periodic `table`, returning the rows whose
-/// residual does not vanish. Pairing honest auxiliary columns with a forged main
-/// trace is how a lookup tamper is caught: the edge recomputed from the main trace
-/// stops matching the committed grand sum.
-pub fn aux_residuals(
+/// Evaluates every AIR constraint on each row of `main` paired with the permutation
+/// trace `perm` under `challenge`, returning the indices of rows carrying at least
+/// one violation.
+pub fn failing_rows(
     air: &AnanseAir,
-    main_columns: &[Vec<Felt>],
-    aux_columns: &[Vec<Felt>],
-    table: &[Felt],
-    length: usize,
-    alpha: Felt,
+    main: &RowMajorMatrix<Felt>,
+    perm: &RowMajorMatrix<Ext>,
+    challenge: Ext,
 ) -> Vec<usize> {
-    let rands = AuxRandElements::new(vec![alpha]);
-    (0..length.saturating_sub(1))
+    let height = main.height();
+    let main_width = main.width();
+    let perm_width = perm.width();
+    let challenges = [challenge];
+    (0..height)
         .filter(|&row| {
-            let main_current = main_columns.iter().map(|c| c[row]).collect::<Vec<Felt>>();
-            let main_next = main_columns
-                .iter()
-                .map(|c| c[row + 1])
-                .collect::<Vec<Felt>>();
-            let aux_current = aux_columns.iter().map(|c| c[row]).collect::<Vec<Felt>>();
-            let aux_next = aux_columns
-                .iter()
-                .map(|c| c[row + 1])
-                .collect::<Vec<Felt>>();
-            let main_frame = EvaluationFrame::from_rows(main_current, main_next);
-            let aux_frame = EvaluationFrame::from_rows(aux_current, aux_next);
-            let mut result = vec![Felt::ZERO; NUM_AUX_CONSTRAINTS];
-            air.evaluate_aux_transition(
-                &main_frame,
-                &aux_frame,
-                &[table[row]],
-                &rands,
-                &mut result,
+            let next = (row + 1) % height;
+            let main_pair = ViewPair::new(
+                RowMajorMatrixView::new_row(&main.values[row * main_width..(row + 1) * main_width]),
+                RowMajorMatrixView::new_row(
+                    &main.values[next * main_width..(next + 1) * main_width],
+                ),
             );
-            result[0] != Felt::ZERO
-        })
-        .collect()
-}
-
-/// Evaluates every transition constraint of `air` across the column-major
-/// `columns` (each of length `length`) and returns the `(row, constraint)` pairs
-/// whose residual does not vanish. An empty result means the trace satisfies the
-/// whole transition system; a non-empty one localizes each violation. Transitions
-/// are checked on rows `0..length - 1`, matching the divisor that excludes the
-/// wrap from the last row back to the first.
-pub fn transition_violations(
-    air: &AnanseAir,
-    columns: &[Vec<Felt>],
-    length: usize,
-) -> Vec<(usize, usize)> {
-    (0..length.saturating_sub(1))
-        .flat_map(|row| {
-            let current = columns
-                .iter()
-                .map(|column| column[row])
-                .collect::<Vec<Felt>>();
-            let next = columns
-                .iter()
-                .map(|column| column[row + 1])
-                .collect::<Vec<Felt>>();
-            let frame = EvaluationFrame::from_rows(current, next);
-            let mut result = vec![Felt::ZERO; air.num_main_transition_constraints()];
-            air.evaluate_transition(&frame, &[], &mut result);
-            result
-                .into_iter()
-                .enumerate()
-                .filter(|(_, residual)| *residual != Felt::ZERO)
-                .map(move |(constraint, _)| (row, constraint))
-                .collect::<Vec<_>>()
+            let perm_pair = ViewPair::new(
+                RowMajorMatrixView::new_row(&perm.values[row * perm_width..(row + 1) * perm_width]),
+                RowMajorMatrixView::new_row(
+                    &perm.values[next * perm_width..(next + 1) * perm_width],
+                ),
+            );
+            let preprocessed = ViewPair::new(
+                RowMajorMatrixView::new(&[][..], 0),
+                RowMajorMatrixView::new(&[][..], 0),
+            );
+            let periodic = air.periodic_values(row);
+            let mut builder = DebugConstraintBuilder::new_with_permutation(
+                row,
+                main_pair,
+                preprocessed,
+                &[],
+                Felt::from_bool(row == 0),
+                Felt::from_bool(row == height - 1),
+                Felt::from_bool(row != height - 1),
+                perm_pair,
+                &challenges,
+                &[],
+                &periodic,
+            );
+            air.eval(&mut builder);
+            builder.has_failures()
         })
         .collect()
 }

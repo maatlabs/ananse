@@ -1,10 +1,5 @@
 //! Errors raised while constructing the AIR.
 
-/// Maps a LogUp witness-build failure to an [`AirError`].
-pub fn build_error<E: core::fmt::Display>(error: E) -> AirError {
-    AirError::LookupBuild(error.to_string())
-}
-
 /// A failure encountered while building AIR-side data from a lifted program.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AirError {
@@ -30,4 +25,20 @@ pub enum AirError {
     /// looks up a control-flow edge absent from the program ROM.
     #[error("could not build the control-flow lookup witness: {0}")]
     LookupBuild(String),
+
+    /// The padded trace is too short to embed the program ROM: the lookup argument
+    /// needs one witness row per ROM entry above the leading spacer row.
+    #[error("trace of {trace_len} rows is too short to embed a {rom_len}-entry program ROM")]
+    TraceTooShortForRom {
+        /// Padded height of the trace.
+        trace_len: usize,
+        /// Number of entries in the program ROM.
+        rom_len: usize,
+    },
+
+    /// The LogUp folding challenge collided with a folded ROM entry or edge, leaving a
+    /// zero denominator. A fresh challenge resolves it; over the quadratic extension
+    /// this is negligibly unlikely.
+    #[error("the LogUp folding challenge collided with a folded value")]
+    DegenerateChallenge,
 }

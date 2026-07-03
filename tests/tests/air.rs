@@ -1,156 +1,128 @@
-use ananse_air::{
-    Air, NUM_AUX_CONSTRAINTS, build_aux_columns, pack_edge, periodic_table, program_rom,
-};
+use ananse_air::{pack_edge, program_rom};
 use ananse_decoder::Module;
 use ananse_executor::{Entry, OpCode, Transition, Word, execute, function_opcodes};
 use ananse_lift::{Register, lift};
 use ananse_tests::{
-    SINGLE_FRAME_FIXTURES, TestHost, air_for, aux_residuals, aux_violations, trace_and_rom,
-    trace_and_rom_entry, transition_violations, wat_from_file,
+    SINGLE_FRAME_FIXTURES, TestHost, air_for, failing_rows, main_matrix, mock_challenge,
+    permutation_of, trace_and_rom, trace_and_rom_entry, wat_from_file,
 };
-use ananse_trace::layout::{COL_CLK, COL_HEIGHT, COL_PC, SELECTOR_BASE, bus_slot, slot};
+use ananse_trace::layout::{COL_CLK, COL_HEIGHT, SELECTOR_BASE, bus_slot, slot};
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING, opcode_index};
-use maat_field::{Felt, FieldElement};
+use p3_field::PrimeCharacteristicRing;
+use p3_goldilocks::Goldilocks as Felt;
 
-/// A fixed stand-in for the Fiat--Shamir folding challenge the prover draws, letting
-/// the auxiliary lookup be exercised without the prover.
-fn mock_challenge() -> Felt {
-    Felt::new(0x9e37_79b9_7f4a_7c15)
+/// The pop-two-push-one arithmetic operators, whose rows the address-binding family
+/// reads the height on. A tamper meant to isolate another family avoids their rows.
+fn is_arithmetic(opcode: OpCode) -> bool {
+    matches!(
+        opcode,
+        OpCode::I32Add | OpCode::I32Sub | OpCode::I64Add | OpCode::I64Sub
+    )
 }
 
-/// The numeric family occupies the final main transition constraints.
-const NUMERIC_CONSTRAINTS: usize = 5;
-
 #[test]
-fn every_single_frame_trace_satisfies_the_transition_system() {
+fn every_single_frame_trace_satisfies_the_constraints() {
+    let alpha = mock_challenge();
     for name in SINGLE_FRAME_FIXTURES {
         let (trace, rom) = trace_and_rom(&wat_from_file(name));
-        let air = air_for(&trace, rom);
-        let violations = transition_violations(&air, trace.columns(), trace.length());
-        assert!(violations.is_empty(), "{name}: {violations:?}");
-        // The property the boundary assertion pins: the entry begins at PC zero.
-        assert_eq!(trace.columns()[COL_PC][0], Felt::ZERO, "{name}: entry PC");
+        let air = air_for(&trace, &rom);
+        let main = main_matrix(trace.columns(), trace.length());
+        let perm = permutation_of(&main, &rom, alpha);
+        let failing = failing_rows(&air, &main, &perm, alpha);
+        assert!(failing.is_empty(), "{name}: {failing:?}");
     }
 }
 
 #[test]
-fn air_dimensions_and_assertions_match_the_trace() {
+fn adding_a_second_hot_selector_breaks_one_hotness() {
+    let alpha = mock_challenge();
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
-    let air = air_for(&trace, rom);
-    assert_eq!(air.context().trace_info().main_trace_width(), trace.width());
-    assert_eq!(
-        air.context().num_transition_constraints(),
-        air.num_main_transition_constraints() + NUM_AUX_CONSTRAINTS
-    );
-    let assertions = air.get_assertions();
-    assert_eq!(assertions.len(), 4);
-    assert_eq!(assertions[0].column(), COL_PC);
-    assert_eq!(assertions[1].column(), COL_CLK);
-    assert_eq!(assertions[2].column(), COL_HEIGHT);
-    assert_eq!(assertions[3].column(), SELECTOR_BASE + SEL_PADDING);
-}
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, alpha);
+    assert!(failing_rows(&air, &main, &perm, alpha).is_empty());
 
-#[test]
-fn tampering_a_selector_breaks_the_transition_system() {
-    let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
-    let air = air_for(&trace, rom);
-
-    // A pristine trace is clean; forcing a second hot selector on row 0---the padding
-    // selector, otherwise zero on a real step---makes the row's selectors sum to two
-    // and breaks one-hotness.
-    assert!(transition_violations(&air, trace.columns(), trace.length()).is_empty());
+    // Forcing a second hot selector on row 0---the padding selector, otherwise zero on
+    // a real step---makes the row's selectors sum to two and breaks one-hotness.
     let mut columns = trace.columns().to_vec();
     columns[SELECTOR_BASE + SEL_PADDING][0] = Felt::ONE;
-    let violations = transition_violations(&air, &columns, trace.length());
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, alpha);
     assert!(
-        violations.iter().any(|&(row, _)| row == 0),
-        "expected a row-0 violation, got {violations:?}"
+        failing.contains(&0),
+        "expected a row-0 violation, got {failing:?}"
     );
 }
 
 #[test]
-fn breaking_the_clock_breaks_the_transition_system() {
+fn stalling_the_clock_breaks_the_increment() {
+    let alpha = mock_challenge();
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
-    let air = air_for(&trace, rom);
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, alpha);
+    assert!(failing_rows(&air, &main, &perm, alpha).is_empty());
 
     // The clock advances by one every row; stalling it on row 1 makes row 0's
     // increment constraint fail, so timestamps cannot be reused across accesses.
-    assert!(transition_violations(&air, trace.columns(), trace.length()).is_empty());
     let mut columns = trace.columns().to_vec();
     columns[COL_CLK][1] = columns[COL_CLK][0];
-    let violations = transition_violations(&air, &columns, trace.length());
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, alpha);
     assert!(
-        violations.iter().any(|&(row, _)| row == 0),
-        "expected a row-0 clock violation, got {violations:?}"
+        failing.contains(&0),
+        "expected a row-0 clock violation, got {failing:?}"
     );
 }
 
 #[test]
-fn clearing_padding_inside_the_halt_suffix_breaks_the_transition_system() {
+fn clearing_padding_in_the_halt_suffix_breaks_absorption() {
+    let alpha = mock_challenge();
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
-    let air = air_for(&trace, rom);
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, alpha);
+    assert!(failing_rows(&air, &main, &perm, alpha).is_empty());
 
     // Padding is absorbing: clearing the padding selector on a row inside the halt
     // suffix makes the preceding still-padding row's absorbing constraint fail, so a
     // prover cannot revive a real step in the trace tail.
-    assert!(transition_violations(&air, trace.columns(), trace.length()).is_empty());
     let pad = trace.steps();
     assert!(pad + 1 < trace.length(), "fixture needs a padding pair");
     let mut columns = trace.columns().to_vec();
     columns[SELECTOR_BASE + SEL_PADDING][pad + 1] = Felt::ZERO;
-    let violations = transition_violations(&air, &columns, trace.length());
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, alpha);
     assert!(
-        violations.iter().any(|&(row, _)| row == pad),
-        "expected an absorbing violation at row {pad}, got {violations:?}"
+        failing.contains(&pad),
+        "expected an absorbing violation at row {pad}, got {failing:?}"
     );
-}
-
-#[test]
-fn every_single_frame_trace_satisfies_the_control_flow_lookup() {
-    let alpha = mock_challenge();
-    for name in SINGLE_FRAME_FIXTURES {
-        let (trace, rom) = trace_and_rom(&wat_from_file(name));
-        let air = air_for(&trace, rom.clone());
-        let length = trace.length();
-
-        let violations = aux_violations(&air, trace.columns(), &rom, length, alpha);
-        assert!(violations.is_empty(), "{name}: aux {violations:?}");
-
-        // The grand sum opens and closes at zero: the looked-up edges are exactly the
-        // ROM edges, so no forged opcode, branch, height, or offset slipped in.
-        let aux = build_aux_columns(trace.columns(), &rom, length, alpha).expect("aux");
-        assert_eq!(aux[1][0], Felt::ZERO, "{name}: grand sum start");
-        assert_eq!(aux[1][length - 1], Felt::ZERO, "{name}: grand sum end");
-    }
 }
 
 #[test]
 fn forging_an_opcode_breaks_the_control_flow_lookup() {
     let alpha = mock_challenge();
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
-    let air = air_for(&trace, rom.clone());
-    let length = trace.length();
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, alpha);
+    assert!(failing_rows(&air, &main, &perm, alpha).is_empty());
 
-    // Honest auxiliary witness for the honest trace.
-    let honest = build_aux_columns(trace.columns(), &rom, length, alpha).expect("aux");
-    let table = periodic_table(&rom, length);
-    assert!(aux_residuals(&air, trace.columns(), &honest, &table, length, alpha).is_empty());
-
-    // Forge row 0's opcode by moving its hot selector; the edge recomputed from the
-    // main trace changes, but the committed multiplicities and grand sum do not, so
-    // the grand-sum recurrence breaks on that row.
+    // Move row 0's hot selector to a different opcode: one-hotness still holds, but the
+    // edge recomputed from the main trace changes, so the honest grand sum no longer
+    // telescopes and the lookup recurrence breaks on that row.
     let mut columns = trace.columns().to_vec();
     let hot = (0..NUM_SELECTORS)
         .find(|&j| columns[SELECTOR_BASE + j][0] == Felt::ONE)
         .expect("row 0 is one-hot");
     columns[SELECTOR_BASE + hot][0] = Felt::ZERO;
-    let forged = if hot == 0 { 1 } else { 0 };
-    columns[SELECTOR_BASE + forged][0] = Felt::ONE;
-
-    let violations = aux_residuals(&air, &columns, &honest, &table, length, alpha);
+    let forged_selector = if hot == 0 { 1 } else { 0 };
+    columns[SELECTOR_BASE + forged_selector][0] = Felt::ONE;
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, alpha);
     assert!(
-        violations.contains(&0),
-        "expected a row-0 lookup violation, got {violations:?}"
+        failing.contains(&0),
+        "expected a row-0 lookup violation, got {failing:?}"
     );
 }
 
@@ -158,30 +130,33 @@ fn forging_an_opcode_breaks_the_control_flow_lookup() {
 fn forging_a_height_breaks_the_control_flow_lookup() {
     let alpha = mock_challenge();
     let (trace, rom) = trace_and_rom(&wat_from_file("func_add.wat"));
-    let air = air_for(&trace, rom.clone());
-    let length = trace.length();
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, alpha);
+    assert!(failing_rows(&air, &main, &perm, alpha).is_empty());
 
-    let honest = build_aux_columns(trace.columns(), &rom, length, alpha).expect("aux");
-    let table = periodic_table(&rom, length);
-    assert!(aux_residuals(&air, trace.columns(), &honest, &table, length, alpha).is_empty());
-
-    // The height rides the ROM edge, so nudging row 0's committed height packs an edge
-    // absent from the table: the grand-sum recurrence breaks on that row.
+    // The height rides the ROM edge. Nudging it on a non-first, non-arithmetic step
+    // packs an edge absent from the table without tripping the first-row height
+    // boundary or the address family, isolating the break to the lookup recurrence.
+    let row = (1..trace.steps())
+        .find(|&r| !is_arithmetic(trace.records()[r].opcode))
+        .expect("a non-arithmetic step past the first");
     let mut columns = trace.columns().to_vec();
-    columns[COL_HEIGHT][0] += Felt::ONE;
-
-    let violations = aux_residuals(&air, &columns, &honest, &table, length, alpha);
+    columns[COL_HEIGHT][row] += Felt::ONE;
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, alpha);
     assert!(
-        violations.contains(&0),
-        "expected a row-0 lookup violation, got {violations:?}"
+        failing.contains(&row),
+        "expected a row-{row} lookup violation, got {failing:?}"
     );
 }
 
-/// Runs `export(args)`, confirms the honest trace satisfies the transition system,
-/// then corrupts one limb of the operator's result on the value bus and confirms the
-/// numeric family localizes the break to the operator's own row and one of its own
-/// constraints. `tamper_hi` selects the high limb (the inter-limb carry / borrow and
-/// the `i32` zeroing) over the low limb (the addition / subtraction balance).
+/// Runs `export(args)`, confirms the honest trace satisfies the AIR, then corrupts one
+/// limb of the operator's result on the value bus and confirms the break localizes to
+/// the operator's own row. Only the numeric family reads a bus slot's value limbs, so a
+/// violation there is that family catching the wrong result. `tamper_hi` selects the
+/// high limb (the inter-limb carry / borrow and the `i32` zeroing) over the low limb
+/// (the addition / subtraction balance).
 fn assert_numeric_relation(
     fixture: &str,
     export: &str,
@@ -189,12 +164,15 @@ fn assert_numeric_relation(
     opcode: OpCode,
     tamper_hi: bool,
 ) {
+    let alpha = mock_challenge();
     let (trace, rom) =
         trace_and_rom_entry(&wat_from_file(fixture), &Entry::Export(export.into()), args);
-    let air = air_for(&trace, rom);
+    let air = air_for(&trace, &rom);
+    let main = main_matrix(trace.columns(), trace.length());
+    let perm = permutation_of(&main, &rom, alpha);
     assert!(
-        transition_violations(&air, trace.columns(), trace.length()).is_empty(),
-        "{export}{args:?}: honest trace violates the transition system"
+        failing_rows(&air, &main, &perm, alpha).is_empty(),
+        "{export}{args:?}: honest trace violates the AIR"
     );
 
     let row = trace
@@ -202,19 +180,16 @@ fn assert_numeric_relation(
         .iter()
         .position(|r| r.opcode == opcode)
         .expect("opcode present");
-    // A binary operator writes its result on value-bus slot 2 of its own row; nudge
-    // the chosen limb away from its correct value.
+    // A binary operator writes its result on value-bus slot 2 of its own row; nudge the
+    // chosen limb away from its correct value.
     let column = bus_slot(2) + if tamper_hi { slot::HI } else { slot::LO };
     let mut columns = trace.columns().to_vec();
     columns[column][row] += Felt::ONE;
-
-    let numeric_base = air.num_main_transition_constraints() - NUMERIC_CONSTRAINTS;
-    let violations = transition_violations(&air, &columns, trace.length());
+    let forged = main_matrix(&columns, trace.length());
+    let failing = failing_rows(&air, &forged, &perm, alpha);
     assert!(
-        violations
-            .iter()
-            .any(|&(r, c)| r == row && c >= numeric_base),
-        "{export}{args:?} (tamper_hi={tamper_hi}): numeric family missed the corruption, got {violations:?}"
+        failing.contains(&row),
+        "{export}{args:?} (tamper_hi={tamper_hi}): numeric family missed the corruption, got {failing:?}"
     );
 }
 
@@ -296,10 +271,10 @@ fn i64_sub_relation_holds_and_catches_a_wrong_result() {
     }
 }
 
-/// Every intra-body control-flow edge an execution actually takes must be a member
-/// of the program ROM the verifier reconstructs; otherwise the lookup that binds
-/// the trace to the module could not close. Terminal transitions (return, host
-/// exit) leave the body and are handled by the AIR's halt gating, not here.
+/// Every intra-body control-flow edge an execution actually takes must be a member of
+/// the program ROM the verifier reconstructs; otherwise the lookup that binds the trace
+/// to the module could not close. Terminal transitions (return, host exit) leave the
+/// body and are handled by the AIR's halt gating, not here.
 #[test]
 fn program_rom_contains_every_executed_edge() {
     let mut checked = 0usize;

@@ -27,8 +27,11 @@ ananse_executor = { path = "crates/ananse_executor", version = "0.2.0" }
 ananse_trace = { path = "crates/ananse_trace", version = "0.2.0" }
 ananse_air = { path = "crates/ananse_air", version = "0.2.0" }
 
-maat_field = "0.19.0"
-maat_air = "0.19.0"
+p3-field = "0.6"
+p3-goldilocks = "0.6"
+p3-air = "0.6"
+p3-matrix = "0.6"
+
 anyhow = "1"
 nom = "7"
 nom-leb128 = "0.2"
@@ -41,24 +44,3 @@ wasmparser = { version = "0.248", default-features = false, features = [
     "features",
 ] }
 wat = "1.248"
-winter-air = "0.13"
-winter-crypto = "0.13"
-winter-math = "0.13"
-winter-prover = "0.13"
-winter-verifier = "0.13"
-
-# Winterfell's prover ships an over-strict `debug_assert_eq!` that requires the
-# *exact* per-constraint quotient degree to equal the declared upper bound;
-# under-exercised opcode-class selectors interpolate to the zero polynomial and
-# the actual quotient degree drops below the declared upper bound. Soundness
-# still holds (FRI checks `quotient_degree <= declared`), so we disable
-# `debug_assertions` for `test` and `bench` profiles to align with release
-# semantics.
-#
-# Our own `debug_assert!`s are sanity checks; production builds already run
-# without them.
-[profile.test]
-debug-assertions = false
-
-[profile.bench]
-debug-assertions = false

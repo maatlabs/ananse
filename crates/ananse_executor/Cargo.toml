@@ -15,6 +15,6 @@ readme = "../../README.md"
 ananse_decoder = { workspace = true }
 ananse_lift = { workspace = true }
 
-maat_field = { workspace = true }
+p3-goldilocks = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 wasmparser = { workspace = true }

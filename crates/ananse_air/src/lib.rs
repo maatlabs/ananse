@@ -2,174 +2,123 @@
 //!
 //! Ananse proves WebAssembly directly against a register-shaped algebraic
 //! intermediate representation. This crate defines [`AnanseAir`], the single
-//! Winterfell [`Air`] the STARK prover and verifier evaluate against the
-//! column-major trace [`ananse_trace`] produces.
-//!
-//! One WebAssembly operator is one trace block. The operand stack, locals, globals,
-//! and linear memory are lifted into one flat address space, and every access rides
-//! a fixed-width value bus. Consistency across the whole machine is one argument: the
-//! address-sorted access log is a permutation of the execution-order bus and returns,
-//! on each read, the value the previous access to that cell left. The main segment
-//! carries the bus, the sorted log, and the per-opcode value semantics; the auxiliary
-//! segment carries the permutation and the control-flow-and-layout lookup against the
-//! program ROM.
+//! [`Air`] the STARK prover and verifier evaluate against the trace
+//! [`ananse_trace`] produces, together with the program-ROM table and the LogUp
+//! permutation trace that binds the trace's control flow and register layout to it.
 
 #![forbid(unsafe_code)]
 
 mod address;
-mod aux_segment;
 mod bus;
 mod consistency;
 mod error;
+mod logup;
 mod numeric;
 mod rom;
-mod transition;
 
-use ananse_trace::layout::{COL_CLK, COL_HEIGHT, COL_PC, SELECTOR_BASE};
-use ananse_trace::selector::SEL_PADDING;
-pub use aux_segment::{
-    AUX_WIDTH, NUM_AUX_CONSTRAINTS, NUM_AUX_RANDS, build_aux_columns, periodic_table,
-};
+use ananse_trace::layout::{BUS_SLOTS, COL_CLK, COL_HEIGHT, COL_PC, SELECTOR_BASE, main_width};
+use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING};
 pub use error::AirError;
-use maat_field::{ExtensionOf, Felt, FieldElement, ToElements};
+pub use logup::{AUX_WIDTH, Ext, NUM_CHALLENGES, build_permutation_trace, periodic_table};
+use p3_air::{Air, AirBuilder, BaseAir, PermutationAirBuilder, WindowAccess};
+use p3_field::PrimeCharacteristicRing;
+use p3_goldilocks::Goldilocks as Felt;
 pub use rom::{pack_edge, program_rom};
-pub use winter_air::{
-    Air, AuxRandElements, BatchingMethod, EvaluationFrame, FieldExtension, ProofOptions, TraceInfo,
-};
-use winter_air::{AirContext, Assertion, TransitionConstraintDegree};
 
-/// Number of main-segment boundary assertions: the entry program counter, the entry
-/// clock, the entry operand-stack height, and the padding-pinned final row.
-const NUM_ASSERTIONS: usize = 4;
+use crate::bus::{BusSlot, SortedEntry};
 
-/// The single auxiliary transition constraint is the LogUp grand-sum recurrence,
-/// declared at degree three conservatively (the periodic table value keeps the
-/// realized degree lower).
-fn aux_degrees() -> Vec<TransitionConstraintDegree> {
-    vec![TransitionConstraintDegree::new(3)]
-}
-
-/// The register-shaped AIR: a two-segment Winterfell [`Air`]. The main segment
-/// carries the unified access-log trace; the auxiliary segment carries the LogUp
-/// witness binding the trace's control flow and layout to the program ROM.
+/// The register-shaped AIR: one main trace carrying the unified access-log, plus a
+/// permutation trace (built by [`build_permutation_trace`]) carrying the LogUp
+/// witness that binds the trace's control flow and layout to the program ROM.
 pub struct AnanseAir {
-    context: AirContext<Felt>,
-    program: Vec<Felt>,
+    rom_periodic: Vec<Felt>,
     stack_base: u64,
 }
 
-/// Public inputs bound into the proof transcript.
-#[derive(Debug, Clone, Default)]
-pub struct AnansePublicInputs {
-    /// The packed program ROM (see [`program_rom()`]).
-    pub program: Vec<Felt>,
-    /// Register-file offset at which the operand stack begins (locals plus globals).
-    pub stack_base: u32,
-}
-
-impl AnansePublicInputs {
-    pub fn new(program: Vec<Felt>, stack_base: u32) -> Self {
-        Self {
-            program,
-            stack_base,
-        }
-    }
-}
-
-impl ToElements<Felt> for AnansePublicInputs {
-    fn to_elements(&self) -> Vec<Felt> {
-        self.program
-            .iter()
-            .copied()
-            .chain([Felt::new(u64::from(self.stack_base))])
-            .collect()
-    }
-}
-
 impl AnanseAir {
-    pub fn num_main_transition_constraints(&self) -> usize {
-        transition::NUM_CONSTRAINTS
+    /// Builds the AIR for a program ROM and the frame's operand-stack base. `rom` is
+    /// the packed ROM table from [`program_rom`]; `trace_len` is the padded trace
+    /// height the verifier-filled periodic ROM column spans.
+    pub fn new(rom: &[Felt], trace_len: usize, stack_base: u32) -> Self {
+        Self {
+            rom_periodic: periodic_table(rom, trace_len),
+            stack_base: u64::from(stack_base),
+        }
     }
 }
 
-impl Air for AnanseAir {
-    type BaseField = Felt;
-    type PublicInputs = AnansePublicInputs;
-
-    fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
-        let context = AirContext::new_multi_segment(
-            trace_info,
-            transition::degrees(),
-            aux_degrees(),
-            NUM_ASSERTIONS,
-            aux_segment::NUM_AUX_ASSERTIONS,
-            options,
-        );
-        Self {
-            context,
-            program: pub_inputs.program,
-            stack_base: u64::from(pub_inputs.stack_base),
-        }
+impl BaseAir<Felt> for AnanseAir {
+    fn width(&self) -> usize {
+        main_width()
     }
 
-    fn context(&self) -> &AirContext<Self::BaseField> {
-        &self.context
+    fn num_periodic_columns(&self) -> usize {
+        1
     }
 
-    fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
-        &self,
-        frame: &EvaluationFrame<E>,
-        _periodic_values: &[E],
-        result: &mut [E],
-    ) {
-        transition::evaluate(frame.current(), frame.next(), self.stack_base, result);
+    fn periodic_columns(&self) -> Vec<Vec<Felt>> {
+        vec![self.rom_periodic.clone()]
     }
 
-    fn evaluate_aux_transition<F, E>(
-        &self,
-        main_frame: &EvaluationFrame<F>,
-        aux_frame: &EvaluationFrame<E>,
-        periodic_values: &[F],
-        aux_rand_elements: &AuxRandElements<E>,
-        result: &mut [E],
-    ) where
-        F: FieldElement<BaseField = Self::BaseField>,
-        E: FieldElement<BaseField = Self::BaseField> + ExtensionOf<F>,
-    {
-        aux_segment::evaluate_transition(
-            main_frame,
-            aux_frame,
-            periodic_values[0],
-            aux_rand_elements.rand_elements()[0],
-            result,
-        );
+    fn periodic_values(&self, row_index: usize) -> Vec<Felt> {
+        vec![self.rom_periodic[row_index % self.rom_periodic.len()]]
+    }
+}
+
+impl<AB: PermutationAirBuilder<F = Felt>> Air<AB> for AnanseAir {
+    fn eval(&self, builder: &mut AB) {
+        let main = builder.main();
+        let local = main.current_slice();
+        let next = main.next_slice();
+
+        init_eval(builder, local, next);
+        numeric::evaluate(builder, local);
+        consistency::evaluate(builder, local, next);
+        address::evaluate(builder, local, self.stack_base);
+        logup::evaluate(builder);
+    }
+}
+
+/// Geometry-independent constraints: one-hot opcode selectors, value-bus and
+/// sorted-log flag booleanity, the padding absorber, the clock increment, and the
+/// entry/exit boundary.
+fn init_eval<AB: AirBuilder<F = Felt>>(builder: &mut AB, local: &[AB::Var], next: &[AB::Var]) {
+    let selectors = &local[SELECTOR_BASE..SELECTOR_BASE + NUM_SELECTORS];
+    for &selector in selectors {
+        builder.assert_bool(selector);
+    }
+    let one_hot_sum = selectors
+        .iter()
+        .copied()
+        .map(Into::into)
+        .fold(AB::Expr::ZERO, |acc, s: AB::Expr| acc + s);
+    builder.assert_one(one_hot_sum);
+
+    // Every value-bus and sorted-log flag is boolean.
+    for index in 0..BUS_SLOTS {
+        let bus = BusSlot::read(local, index);
+        builder.assert_bool(bus.active);
+        builder.assert_bool(bus.is_write);
+        let sorted = SortedEntry::read(local, index);
+        builder.assert_bool(sorted.active);
+        builder.assert_bool(sorted.is_write);
+        builder.assert_bool(sorted.same_addr);
     }
 
-    fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
-        vec![periodic_table(
-            &self.program,
-            self.context.trace_info().length(),
-        )]
-    }
+    let pad = local[SELECTOR_BASE + SEL_PADDING];
+    let pad_next = next[SELECTOR_BASE + SEL_PADDING];
+    builder
+        .when_transition()
+        .assert_zero(pad * (AB::Expr::ONE - pad_next));
 
-    fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
-        let last_row = self.context.trace_info().length().saturating_sub(1);
-        vec![
-            Assertion::single(COL_PC, 0, Felt::ZERO),
-            Assertion::single(COL_CLK, 0, Felt::ZERO),
-            Assertion::single(COL_HEIGHT, 0, Felt::ZERO),
-            Assertion::single(SELECTOR_BASE + SEL_PADDING, last_row, Felt::ONE),
-        ]
-    }
+    builder
+        .when_transition()
+        .assert_zero(next[COL_CLK] - local[COL_CLK] - AB::Expr::ONE);
 
-    fn get_aux_assertions<E: FieldElement<BaseField = Self::BaseField>>(
-        &self,
-        _aux_rand_elements: &AuxRandElements<E>,
-    ) -> Vec<Assertion<E>> {
-        let last_row = self.context.trace_info().length().saturating_sub(1);
-        vec![
-            Assertion::single(aux_segment::AUX_GRAND_SUM, 0, E::ZERO),
-            Assertion::single(aux_segment::AUX_GRAND_SUM, last_row, E::ZERO),
-        ]
-    }
+    builder.when_first_row().assert_zero(local[COL_PC]);
+    builder.when_first_row().assert_zero(local[COL_CLK]);
+    builder.when_first_row().assert_zero(local[COL_HEIGHT]);
+    builder
+        .when_last_row()
+        .assert_one(local[SELECTOR_BASE + SEL_PADDING]);
 }
