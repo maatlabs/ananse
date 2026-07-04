@@ -13,6 +13,7 @@ ananse_lift = { workspace = true }
 ananse_executor = { workspace = true }
 ananse_trace = { workspace = true }
 ananse_air = { workspace = true }
+ananse_wasi = { workspace = true }
 
 p3-air = { workspace = true }
 p3-field = { workspace = true }

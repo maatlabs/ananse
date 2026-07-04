@@ -66,6 +66,7 @@ dependencies = [
  "ananse_executor",
  "ananse_lift",
  "ananse_trace",
+ "ananse_wasi",
  "p3-air",
  "p3-field",
  "p3-goldilocks",
@@ -83,6 +84,14 @@ dependencies = [
  "p3-field",
  "p3-goldilocks",
  "thiserror",
+]
+
+[[package]]
+name = "ananse_wasi"
+version = "0.2.0"
+dependencies = [
+ "ananse_decoder",
+ "ananse_executor",
 ]
 
 [[package]]

@@ -3,8 +3,8 @@ use ananse_decoder::Module;
 use ananse_executor::{Entry, OpCode, Transition, Word, execute, function_opcodes};
 use ananse_lift::{Register, lift};
 use ananse_tests::{
-    SINGLE_FRAME_FIXTURES, TestHost, air_for, failing_rows, main_matrix, mock_challenges,
-    permutation_of, trace_and_rom, trace_and_rom_entry, wat_from_file,
+    SINGLE_FRAME_FIXTURES, air_for, failing_rows, main_matrix, mock_challenges, permutation_of,
+    trace_and_rom, trace_and_rom_entry, wat_from_file,
 };
 use ananse_trace::Trace;
 use ananse_trace::layout::{
@@ -12,6 +12,7 @@ use ananse_trace::layout::{
     SELECTOR_BASE, bus_slot, rc_gap, slot, sorted, sorted_slot,
 };
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING, opcode_index};
+use ananse_wasi::WasiSnapshotPreview1;
 use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks as Felt;
 
@@ -887,7 +888,7 @@ fn program_rom_contains_every_executed_edge() {
     for name in SINGLE_FRAME_FIXTURES {
         let module = Module::decode(&wat_from_file(name)).expect("decode");
         let program = lift(&module).expect("lift");
-        let mut host = TestHost::default();
+        let mut host = WasiSnapshotPreview1::new();
         let mut records = Vec::new();
         execute(&module, &Entry::Auto, &[], &mut host, &mut records).expect("execute");
 

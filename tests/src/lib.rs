@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 use ananse_air::{
     AnanseAir, NUM_CHALLENGES, QuadExt, build_permutation_trace, program_data, program_rom,
 };
-use ananse_decoder::{ImportEntry, Module};
+use ananse_decoder::Module;
 use ananse_executor::{
-    Entry, ExecuteError, Host, HostAction, Word, execute, function_constants, function_opcodes,
-    global_initializers,
+    Entry, Word, execute, function_constants, function_opcodes, global_initializers,
 };
 use ananse_lift::lift;
 use ananse_trace::Trace;
+use ananse_wasi::WasiSnapshotPreview1;
 use p3_air::{Air, BaseAir, DebugConstraintBuilder};
 use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks as Felt;
@@ -104,7 +104,7 @@ pub fn trace_of(bytes: &[u8]) -> Trace {
     let module = Module::decode(bytes).expect("decode");
     let program = lift(&module).expect("lift");
     let globals = global_initializers(&module).expect("globals");
-    let mut host = TestHost::default();
+    let mut host = WasiSnapshotPreview1::new();
     let mut records = Vec::new();
     execute(&module, &Entry::Auto, &[], &mut host, &mut records).expect("execute");
     Trace::build(&program, records, &[], &globals).expect("build")
@@ -122,7 +122,7 @@ pub fn trace_and_rom_entry(
     let module = Module::decode(bytes).expect("decode");
     let program = lift(&module).expect("lift");
     let globals = global_initializers(&module).expect("globals");
-    let mut host = TestHost::default();
+    let mut host = WasiSnapshotPreview1::new();
     let mut records = Vec::new();
     execute(&module, entry, args, &mut host, &mut records).expect("execute");
     let func_index = records
@@ -140,60 +140,6 @@ pub fn trace_and_rom_entry(
     let data = program_data(&constants, function).expect("program data");
     let trace = Trace::build(&program, records, args, &globals).expect("build");
     (trace, rom, data)
-}
-
-#[derive(Default)]
-pub struct TestHost {
-    pub journal: Vec<u8>,
-}
-
-impl Host for TestHost {
-    fn call(
-        &mut self,
-        import: &ImportEntry,
-        args: &[Word],
-        memory: &mut [u8],
-    ) -> Result<HostAction, ExecuteError> {
-        match import.name.as_str() {
-            "fd_write" => {
-                let iovs = as_u32(args[1]) as usize;
-                let count = as_u32(args[2]);
-                let nwritten = as_u32(args[3]) as usize;
-                let mut total: u32 = 0;
-                for i in 0..count {
-                    let base = iovs + (i as usize) * 8;
-                    let ptr = read_u32(memory, base) as usize;
-                    let len = read_u32(memory, base + 4);
-                    self.journal
-                        .extend_from_slice(&memory[ptr..ptr + len as usize]);
-                    total += len;
-                }
-                write_u32(memory, nwritten, total);
-                Ok(HostAction::Return(vec![Word::I32(0)]))
-            }
-            "proc_exit" => Ok(HostAction::Exit(as_u32(args[0]) as i32)),
-            _ => Err(ExecuteError::Host {
-                module: import.module.clone(),
-                name: import.name.clone(),
-                message: "unexpected import".into(),
-            }),
-        }
-    }
-}
-
-fn as_u32(word: Word) -> u32 {
-    match word {
-        Word::I32(v) => v,
-        Word::I64(v) => v as u32,
-    }
-}
-
-fn read_u32(memory: &[u8], at: usize) -> u32 {
-    u32::from_le_bytes([memory[at], memory[at + 1], memory[at + 2], memory[at + 3]])
-}
-
-fn write_u32(memory: &mut [u8], at: usize, value: u32) {
-    memory[at..at + 4].copy_from_slice(&value.to_le_bytes());
 }
 
 pub fn wasm_features() -> WasmFeatures {

@@ -4,14 +4,15 @@ use ananse_executor::{
     function_opcodes,
 };
 use ananse_lift::{Register, lift};
-use ananse_tests::{TestHost, WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
+use ananse_tests::{WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
+use ananse_wasi::WasiSnapshotPreview1;
 use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks as Felt;
 
 /// Runs a module from its automatic entry point, collecting the record stream.
 fn records(bytes: &[u8]) -> Vec<StepRecord> {
     let module = Module::decode(bytes).expect("decode");
-    let mut host = TestHost::default();
+    let mut host = WasiSnapshotPreview1::new();
     let mut stream = Vec::new();
     execute(&module, &Entry::Auto, &[], &mut host, &mut stream).expect("execute");
     stream
@@ -20,7 +21,7 @@ fn records(bytes: &[u8]) -> Vec<StepRecord> {
 /// Runs an exported function with the given arguments, returning its results.
 fn run_export(bytes: &[u8], name: &str, args: &[Word]) -> Vec<Word> {
     let module = Module::decode(bytes).expect("decode");
-    let mut host = TestHost::default();
+    let mut host = WasiSnapshotPreview1::new();
     execute(
         &module,
         &Entry::Export(name.into()),
@@ -291,9 +292,9 @@ fn store_emits_a_memory_access() {
 #[test]
 fn hello_world_writes_its_journal() {
     let module = Module::decode(&wat_from_file("hello_world.wat")).expect("decode");
-    let mut host = TestHost::default();
+    let mut host = WasiSnapshotPreview1::new();
     let execution = execute(&module, &Entry::Auto, &[], &mut host, &mut ()).expect("execute");
-    assert_eq!(host.journal, b"Hello, World!\n");
+    assert_eq!(host.journal(), b"Hello, World!\n");
     assert_eq!(execution.returns, vec![Word::I32(0)]);
 }
 
@@ -303,7 +304,7 @@ fn proc_exit_halts_with_status() {
         (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $exit (param i32))) \
         (func (export \"_start\") (call $exit (i32.const 3))))";
     let module = Module::decode(&wat_from_str(wat)).expect("decode");
-    let mut host = TestHost::default();
+    let mut host = WasiSnapshotPreview1::new();
     let execution = execute(&module, &Entry::Auto, &[], &mut host, &mut ()).expect("execute");
     assert_eq!(execution.exit, Some(3));
     assert!(execution.returns.is_empty());

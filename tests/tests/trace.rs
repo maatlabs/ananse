@@ -1,12 +1,13 @@
 use ananse_decoder::Module;
 use ananse_executor::{Entry, NoHost, OpCode, Transition, Word, execute};
 use ananse_lift::lift;
-use ananse_tests::{SINGLE_FRAME_FIXTURES, TestHost, trace_of, wat_from_file, wat_from_str};
+use ananse_tests::{SINGLE_FRAME_FIXTURES, trace_of, wat_from_file, wat_from_str};
 use ananse_trace::layout::{
     self, BUS_SLOTS, COL_CLK, COL_PC, SELECTOR_BASE, bus_slot, slot, sorted, sorted_slot,
 };
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING};
 use ananse_trace::{Trace, TraceError};
+use ananse_wasi::WasiSnapshotPreview1;
 use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks as Felt;
 
@@ -141,7 +142,7 @@ fn recursive_and_cross_function_calls_are_unsupported() {
     for (name, entry, args) in cases {
         let module = Module::decode(&wat_from_file(name)).expect("decode");
         let program = lift(&module).expect("lift");
-        let mut host = TestHost::default();
+        let mut host = WasiSnapshotPreview1::new();
         let mut records = Vec::new();
         execute(&module, entry, args, &mut host, &mut records).expect("execute");
         assert!(
@@ -196,7 +197,7 @@ fn store_then_load_round_trip_through_the_unified_log() {
 fn padding_rests_on_the_exit_sentinel_with_an_idle_bus() {
     let module = Module::decode(&wat_from_file("i32_const.wat")).expect("decode");
     let program = lift(&module).expect("lift");
-    let mut host = TestHost::default();
+    let mut host = WasiSnapshotPreview1::new();
     let mut records = Vec::new();
     execute(&module, &Entry::Auto, &[], &mut host, &mut records).expect("execute");
     let func_index = records[0].func_index;
