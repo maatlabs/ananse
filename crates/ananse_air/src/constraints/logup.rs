@@ -9,12 +9,12 @@ use ananse_trace::layout::{COL_HEIGHT, COL_IMM, COL_PC, SELECTOR_BASE};
 use ananse_trace::selector::NUM_SELECTORS;
 use p3_air::{AirBuilder, ExtensionBuilder, PermutationAirBuilder, WindowAccess};
 use p3_field::{Dup, Field, PrimeCharacteristicRing, PrimeField64};
-use p3_goldilocks::Goldilocks as Felt;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 
+use super::{AUX_GRAND_SUM, AUX_MULTIPLICITY, CHALLENGE_CONTROL_FLOW};
 use crate::rom::{HEIGHT_PLACE, IMM_PLACE, NEXT_PC_PLACE, OPCODE_RADIX};
-use crate::{AUX_GRAND_SUM, AUX_MULTIPLICITY, AirError, CHALLENGE_CONTROL_FLOW, Ext, Result};
+use crate::{AirError, Felt, QuadExt, Result};
 
 pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
     let main = builder.main();
@@ -49,8 +49,8 @@ pub fn periodic_table(rom: &[Felt], length: usize) -> Vec<Felt> {
 pub(crate) fn control_flow_columns(
     main: &RowMajorMatrix<Felt>,
     rom: &[Felt],
-    alpha: Ext,
-) -> Result<(Vec<Ext>, Vec<Ext>)> {
+    alpha: QuadExt,
+) -> Result<(Vec<QuadExt>, Vec<QuadExt>)> {
     let height = main.height();
     let width = main.width();
     let row = |r: usize| &main.values[r * width..(r + 1) * width];
@@ -85,9 +85,9 @@ pub(crate) fn control_flow_columns(
         .collect::<Result<Vec<Felt>>>()?;
 
     let pad = rom.first().copied().unwrap_or(Felt::ZERO);
-    let mut multiplicity = vec![Ext::ZERO; height];
+    let mut multiplicity = vec![QuadExt::ZERO; height];
     for (position, &count) in counts.iter().enumerate() {
-        multiplicity[position + 1] = Ext::from(Felt::new(count));
+        multiplicity[position + 1] = QuadExt::from(Felt::new(count));
     }
 
     // The spacer-shifted table and lookup streams row `i` pairs with: ROM entry `i-1`
@@ -99,12 +99,12 @@ pub(crate) fn control_flow_columns(
     };
     let lookup_at = |i: usize| if i == 0 { Felt::ZERO } else { edges[i - 1] };
 
-    let mut grand_sum = vec![Ext::ZERO; height];
+    let mut grand_sum = vec![QuadExt::ZERO; height];
     for i in 1..height {
-        let t_inv = (alpha - Ext::from(table_at(i)))
+        let t_inv = (alpha - QuadExt::from(table_at(i)))
             .try_inverse()
             .ok_or(AirError::DegenerateChallenge)?;
-        let f_inv = (alpha - Ext::from(lookup_at(i)))
+        let f_inv = (alpha - QuadExt::from(lookup_at(i)))
             .try_inverse()
             .ok_or(AirError::DegenerateChallenge)?;
         grand_sum[i] = grand_sum[i - 1] + multiplicity[i] * t_inv - f_inv;

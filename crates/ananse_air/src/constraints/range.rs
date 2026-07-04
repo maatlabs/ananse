@@ -7,14 +7,12 @@ use ananse_trace::layout::{
 };
 use p3_air::{AirBuilder, ExtensionBuilder, PermutationAirBuilder, WindowAccess};
 use p3_field::{Dup, Field, PrimeCharacteristicRing, PrimeField64};
-use p3_goldilocks::Goldilocks as Felt;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 
+use super::{AUX_RC_CHANNEL_BASE, AUX_RC_MULT, AUX_RC_TABLE, CHALLENGE_RANGE};
 use crate::bus::{BusSlot, SortedEntry};
-use crate::{
-    AUX_RC_CHANNEL_BASE, AUX_RC_MULT, AUX_RC_TABLE, AirError, CHALLENGE_RANGE, Ext, Result,
-};
+use crate::{AirError, Felt, QuadExt, Result};
 
 pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
     let main = builder.main();
@@ -95,7 +93,7 @@ pub fn byte_table(length: usize) -> Vec<Felt> {
         .collect()
 }
 
-pub(crate) fn columns(main: &RowMajorMatrix<Felt>, beta: Ext) -> Result<Vec<Vec<Ext>>> {
+pub(crate) fn columns(main: &RowMajorMatrix<Felt>, beta: QuadExt) -> Result<Vec<Vec<QuadExt>>> {
     let height = main.height();
     let width = main.width();
     let row = |r: usize| &main.values[r * width..(r + 1) * width];
@@ -120,28 +118,28 @@ pub(crate) fn columns(main: &RowMajorMatrix<Felt>, beta: Ext) -> Result<Vec<Vec<
     }
 
     let table_at = |i: usize| Felt::new(if i < RANGE_TABLE_SIZE { i as u64 } else { 0 });
-    let reciprocal = |denominator: Ext| {
+    let reciprocal = |denominator: QuadExt| {
         denominator
             .try_inverse()
             .ok_or(AirError::DegenerateChallenge)
     };
 
-    let mut multiplicity = vec![Ext::ZERO; height];
+    let mut multiplicity = vec![QuadExt::ZERO; height];
     for (value, &count) in counts.iter().enumerate() {
-        multiplicity[value] = Ext::from(Felt::new(count));
+        multiplicity[value] = QuadExt::from(Felt::new(count));
     }
 
-    let mut table_sum = vec![Ext::ZERO; height];
+    let mut table_sum = vec![QuadExt::ZERO; height];
     for i in 0..summed {
-        let step = multiplicity[i] * reciprocal(beta - Ext::from(table_at(i)))?;
+        let step = multiplicity[i] * reciprocal(beta - QuadExt::from(table_at(i)))?;
         table_sum[i + 1] = table_sum[i] + step;
     }
 
-    let mut channels: Vec<Vec<Ext>> = vec![vec![Ext::ZERO; height]; RANGE_COLS];
+    let mut channels: Vec<Vec<QuadExt>> = vec![vec![QuadExt::ZERO; height]; RANGE_COLS];
     for (channel, accumulator) in channels.iter_mut().enumerate() {
         for i in 0..summed {
             let byte = row(i)[RANGE_BASE + channel];
-            accumulator[i + 1] = accumulator[i] + reciprocal(beta - Ext::from(byte))?;
+            accumulator[i + 1] = accumulator[i] + reciprocal(beta - QuadExt::from(byte))?;
         }
     }
 

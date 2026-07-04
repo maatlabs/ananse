@@ -7,15 +7,14 @@ use ananse_trace::layout::{COL_PC, PC_DATA_A, PC_DATA_B, SELECTOR_BASE, wit, wit
 use ananse_trace::selector::opcode_index;
 use p3_air::{AirBuilder, ExtensionBuilder, PermutationAirBuilder, WindowAccess};
 use p3_field::{Dup, Field, PrimeCharacteristicRing, PrimeField64};
-use p3_goldilocks::Goldilocks as Felt;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 
-use crate::bus::BusSlot;
-use crate::{
-    AUX_DATA_CHANNEL, AUX_DATA_MULT, AUX_DATA_TABLE, AirError, CHALLENGE_DATA_DENOM,
-    CHALLENGE_DATA_FOLD, Ext, Result,
+use super::{
+    AUX_DATA_CHANNEL, AUX_DATA_MULT, AUX_DATA_TABLE, CHALLENGE_DATA_DENOM, CHALLENGE_DATA_FOLD,
 };
+use crate::bus::BusSlot;
+use crate::{AirError, Felt, QuadExt, Result};
 
 /// The two `const` pushes, whose written value the data-ROM binds to the module
 /// immediate.
@@ -138,9 +137,9 @@ pub fn data_periodic(data: &[(u32, u32, u32)], length: usize) -> [Vec<Felt>; 3] 
 pub(crate) fn columns(
     main: &RowMajorMatrix<Felt>,
     data: &[(u32, u32, u32)],
-    fold: Ext,
-    denom: Ext,
-) -> Result<Vec<Vec<Ext>>> {
+    fold: QuadExt,
+    denom: QuadExt,
+) -> Result<Vec<Vec<QuadExt>>> {
     let height = main.height();
     let width = main.width();
     let row = |r: usize| &main.values[r * width..(r + 1) * width];
@@ -163,9 +162,9 @@ pub(crate) fn columns(
         [pc, a, b]
             .into_iter()
             .rev()
-            .fold(Ext::ZERO, |acc, term| acc * fold + Ext::from(term))
+            .fold(QuadExt::ZERO, |acc, term| acc * fold + QuadExt::from(term))
     };
-    let reciprocal = |value: Ext| value.try_inverse().ok_or(AirError::DegenerateChallenge);
+    let reciprocal = |value: QuadExt| value.try_inverse().ok_or(AirError::DegenerateChallenge);
     let looked_up = |r: usize| {
         LOOKED_UP
             .iter()
@@ -186,9 +185,9 @@ pub(crate) fn columns(
         counts[*position] = counts[*position].saturating_add(1);
     }
 
-    let mut multiplicity = vec![Ext::ZERO; height];
+    let mut multiplicity = vec![QuadExt::ZERO; height];
     for (position, &count) in counts.iter().enumerate() {
-        multiplicity[position] = Ext::from(Felt::new(count));
+        multiplicity[position] = QuadExt::from(Felt::new(count));
     }
 
     let table_at = |i: usize| -> (Felt, Felt, Felt) {
@@ -202,18 +201,18 @@ pub(crate) fn columns(
             })
     };
 
-    let mut table_sum = vec![Ext::ZERO; height];
+    let mut table_sum = vec![QuadExt::ZERO; height];
     for i in 0..summed {
         let (pc, a, b) = table_at(i);
         table_sum[i + 1] = table_sum[i] + multiplicity[i] * reciprocal(denom - fold_row(pc, a, b))?;
     }
 
-    let mut channel = vec![Ext::ZERO; height];
+    let mut channel = vec![QuadExt::ZERO; height];
     for r in 0..summed {
         let step = if looked_up(r) {
             reciprocal(denom - fold_row(row(r)[COL_PC], row(r)[PC_DATA_A], row(r)[PC_DATA_B]))?
         } else {
-            Ext::ZERO
+            QuadExt::ZERO
         };
         channel[r + 1] = channel[r] + step;
     }

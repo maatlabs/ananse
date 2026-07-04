@@ -6,8 +6,8 @@ use ananse_trace::layout::SELECTOR_BASE;
 use ananse_trace::selector::opcode_index;
 use p3_air::AirBuilder;
 use p3_field::{Dup, Field};
-use p3_goldilocks::Goldilocks as Felt;
 
+use crate::Felt;
 use crate::bus::BusSlot;
 
 pub(crate) fn evaluate<AB: AirBuilder<F = Felt>>(builder: &mut AB, local: &[AB::Var]) {

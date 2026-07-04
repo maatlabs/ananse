@@ -8,14 +8,16 @@
 //! internally consistent (every read returns the value the previous access to its
 //! address left), is the single argument that ties the whole machine together.
 
-use ananse_executor::{RegAccess, StepRecord, Transition, Word};
+use ananse_executor::{OpCode, RegAccess, StepRecord, Transition, Word};
 use ananse_lift::{LiftedFunction, LiftedProgram, Register, Successors};
-use p3_field::{PrimeCharacteristicRing, PrimeField64};
+use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks as Felt;
 
 use crate::layout::{
-    self, BUS_SLOTS, COL_CLK, COL_HEIGHT, COL_IMM, COL_PC, GAP_BYTES, LIMB_BYTES, RC_WRITE_HI,
-    RC_WRITE_LO, REGISTER_REGION, SELECTOR_BASE, bus_slot, rc_gap, slot, sorted, sorted_slot,
+    self, BUS_SLOTS, BW_A_BASE, BW_B_BASE, BW_NIBBLES, BW_P_BASE, COL_CLK, COL_HEIGHT, COL_IMM,
+    COL_PC, GAP_BYTES, LIMB_BYTES, PC_DATA_A, PC_DATA_B, POPCNT_BYTE_BASE, POPCNT_BYTES,
+    POPCNT_PC_BASE, RC_CMP_DHI, RC_CMP_DLO, RC_SIGN_A, RC_SIGN_B, RC_WRITE_HI, RC_WRITE_LO,
+    REGISTER_REGION, SELECTOR_BASE, bus_slot, rc_gap, slot, sorted, sorted_slot, wit, witness,
 };
 use crate::selector::{SEL_PADDING, opcode_index};
 use crate::{Result, TraceError};
@@ -68,8 +70,6 @@ pub struct Trace {
 }
 
 impl Trace {
-    /// Builds a trace from a single frame's execution: the lifted `program` that
-    /// scheduled it and the `records` it emitted, in execution order.
     pub fn build(
         program: &LiftedProgram,
         records: Vec<StepRecord>,
@@ -106,6 +106,7 @@ impl Trace {
         let (columns, steps, length) = build_columns(
             &records,
             exec_frame,
+            func,
             &accesses,
             &heights,
             halt_pc,
@@ -123,55 +124,43 @@ impl Trace {
         })
     }
 
-    /// The record stream the trace was built from, in execution order.
     pub fn records(&self) -> &[StepRecord] {
         &self.records
     }
 
-    /// The column-major trace matrix: one inner vector per column, each of length
-    /// [`length`](Self::length).
     pub fn columns(&self) -> &[Vec<Felt>] {
         &self.columns
     }
 
-    /// The column at `index`, or `None` if it is out of range.
     pub fn column_at(&self, index: usize) -> Option<&[Felt]> {
         self.columns.get(index).map(Vec::as_slice)
     }
 
-    /// Number of columns in the trace, [`layout::main_width`].
     pub fn width(&self) -> usize {
         self.columns.len()
     }
 
-    /// Number of rows after power-of-two padding.
     pub fn length(&self) -> usize {
         self.length
     }
 
-    /// Number of executed operators (unpadded rows).
     pub fn steps(&self) -> usize {
         self.steps
     }
 
-    /// Number of local slots in the traced frame (parameters plus declared locals).
     pub fn locals(&self) -> u32 {
         self.locals
     }
 
-    /// Register-file offset at which the operand stack begins: the locals followed by the globals.
     pub fn stack_base(&self) -> u32 {
         self.locals.saturating_add(self.globals)
     }
 
-    /// The frame's public initial-state table as `(address, lo, hi)` triples, one per
-    /// register-file cell in ascending address order.
     pub fn initial_state(&self) -> &[(u64, Felt, Felt)] {
         &self.initial
     }
 }
 
-/// The executing frame's public initial register image as `(address, lo, hi)` triples.
 fn initial_state(frame: ExecFrame, args: &[Word], globals: &[Word]) -> Vec<(u64, Felt, Felt)> {
     (0..frame.width)
         .map(|offset| {
@@ -285,6 +274,7 @@ fn validate(accesses: &[Access]) -> Result<()> {
 fn build_columns(
     records: &[StepRecord],
     exec_frame: ExecFrame,
+    func: &LiftedFunction,
     accesses: &[Access],
     heights: &[u32],
     halt_pc: u32,
@@ -321,6 +311,11 @@ fn build_columns(
             write_value_bytes(&mut columns, RC_WRITE_LO, row, write.lo);
             write_value_bytes(&mut columns, RC_WRITE_HI, row, write.hi);
         }
+
+        fill_comparison(&mut columns, row, record);
+        fill_bitwise(&mut columns, row, record);
+        fill_popcount(&mut columns, row, record);
+        fill_pcdata(&mut columns, row, record, func);
     }
 
     columns[COL_PC][steps..].fill(Felt::new(u64::from(halt_pc)));
@@ -335,9 +330,222 @@ fn build_columns(
 }
 
 fn write_value_bytes(columns: &mut [Vec<Felt>], base: usize, row: usize, value: Felt) {
-    let value = value.as_canonical_u64();
-    for byte in 0..LIMB_BYTES {
+    write_bytes(columns, base, row, value.as_canonical_u64(), LIMB_BYTES);
+}
+
+fn write_bytes(columns: &mut [Vec<Felt>], base: usize, row: usize, value: u64, count: usize) {
+    for byte in 0..count {
         columns[base + byte][row] = Felt::new((value >> (8 * byte)) & 0xff);
+    }
+}
+
+fn fill_comparison(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord) {
+    let limbs = |word: Word| {
+        let (lo, hi) = word.to_limbs();
+        (lo.as_canonical_u64(), hi.as_canonical_u64())
+    };
+    match record.opcode {
+        op if is_binary_compare(op) => {
+            let (Some(rhs), Some(lhs)) = (record.reads.first(), record.reads.get(1)) else {
+                return;
+            };
+            let (llo, lhi) = limbs(lhs.value);
+            let (rlo, rhi) = limbs(rhs.value);
+            fill_borrow(columns, row, (llo, lhi), (rlo, rhi));
+            fill_is_zero(columns, row, (llo, lhi), (rlo, rhi));
+            if is_signed_compare(op) {
+                let wide = is_i64_compare(op);
+                fill_sign(
+                    columns,
+                    RC_SIGN_A,
+                    witness::SIGN_A,
+                    row,
+                    if wide { lhi } else { llo },
+                );
+                fill_sign(
+                    columns,
+                    RC_SIGN_B,
+                    witness::SIGN_B,
+                    row,
+                    if wide { rhi } else { rlo },
+                );
+            }
+        }
+        OpCode::I32Eqz | OpCode::I64Eqz | OpCode::Select | OpCode::If | OpCode::BrIf => {
+            if let Some(operand) = record.reads.first() {
+                fill_is_zero(columns, row, limbs(operand.value), (0, 0));
+            }
+        }
+        OpCode::I64ExtendI32S => {
+            if let Some(source) = record.reads.first() {
+                let (slo, _) = limbs(source.value);
+                fill_sign(columns, RC_SIGN_A, witness::SIGN_A, row, slo);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn fill_pcdata(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord, func: &LiftedFunction) {
+    match record.opcode {
+        OpCode::I32Const | OpCode::I64Const => {
+            if let Some(write) = record.writes.first() {
+                let (lo, hi) = write.value.to_limbs();
+                columns[PC_DATA_A][row] = lo;
+                columns[PC_DATA_B][row] = hi;
+            }
+        }
+        OpCode::If | OpCode::BrIf => {
+            if let Some(Successors::Branch { taken, not_taken }) = func
+                .instrs
+                .get(record.pc as usize)
+                .map(|instr| &instr.successors)
+            {
+                columns[PC_DATA_A][row] = Felt::new(u64::from(*taken));
+                columns[PC_DATA_B][row] = Felt::new(u64::from(*not_taken));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn fill_borrow(columns: &mut [Vec<Felt>], row: usize, lhs: (u64, u64), rhs: (u64, u64)) {
+    let two32 = 1u64 << 32;
+    let (dlo, borrow_lo) = if lhs.0 >= rhs.0 {
+        (lhs.0 - rhs.0, 0)
+    } else {
+        (lhs.0 + two32 - rhs.0, 1)
+    };
+    let net = i128::from(lhs.1) - i128::from(rhs.1) - i128::from(borrow_lo);
+    let (dhi, borrow_hi) = if net >= 0 {
+        (net as u64, 0)
+    } else {
+        ((net + i128::from(two32)) as u64, 1)
+    };
+    write_bytes(columns, RC_CMP_DLO, row, dlo, LIMB_BYTES);
+    write_bytes(columns, RC_CMP_DHI, row, dhi, LIMB_BYTES);
+    columns[wit(witness::BORROW_LO)][row] = Felt::new(borrow_lo);
+    columns[wit(witness::BORROW_HI)][row] = Felt::new(borrow_hi);
+}
+
+fn fill_is_zero(columns: &mut [Vec<Felt>], row: usize, a: (u64, u64), b: (u64, u64)) {
+    let g =
+        (Felt::new(a.0) - Felt::new(b.0)) + (Felt::new(a.1) - Felt::new(b.1)) * Felt::new(1 << 32);
+    let equal = g == Felt::ZERO;
+    columns[wit(witness::EQUAL)][row] = boolean(equal);
+    columns[wit(witness::INV)][row] = if equal { Felt::ZERO } else { g.inverse() };
+}
+
+fn fill_sign(columns: &mut [Vec<Felt>], rc_base: usize, sign_col: usize, row: usize, limb: u64) {
+    let sign = (limb >> 31) & 1;
+    let rest = limb & 0x7FFF_FFFF;
+    write_bytes(columns, rc_base, row, rest, LIMB_BYTES);
+    columns[rc_base + LIMB_BYTES][row] = Felt::new(2 * ((rest >> 24) & 0xff));
+    columns[wit(sign_col)][row] = Felt::new(sign);
+}
+
+fn is_binary_compare(op: OpCode) -> bool {
+    matches!(
+        op,
+        OpCode::I32Eq
+            | OpCode::I32Ne
+            | OpCode::I32LtS
+            | OpCode::I32LtU
+            | OpCode::I32GtS
+            | OpCode::I32GtU
+            | OpCode::I32LeS
+            | OpCode::I32LeU
+            | OpCode::I32GeS
+            | OpCode::I32GeU
+            | OpCode::I64Eq
+            | OpCode::I64Ne
+            | OpCode::I64LtS
+            | OpCode::I64LtU
+            | OpCode::I64GtS
+            | OpCode::I64GtU
+            | OpCode::I64LeS
+            | OpCode::I64LeU
+            | OpCode::I64GeS
+            | OpCode::I64GeU
+    )
+}
+
+fn is_signed_compare(op: OpCode) -> bool {
+    matches!(
+        op,
+        OpCode::I32LtS
+            | OpCode::I32GtS
+            | OpCode::I32LeS
+            | OpCode::I32GeS
+            | OpCode::I64LtS
+            | OpCode::I64GtS
+            | OpCode::I64LeS
+            | OpCode::I64GeS
+    )
+}
+
+fn is_i64_compare(op: OpCode) -> bool {
+    matches!(
+        op,
+        OpCode::I64Eq
+            | OpCode::I64Ne
+            | OpCode::I64LtS
+            | OpCode::I64LtU
+            | OpCode::I64GtS
+            | OpCode::I64GtU
+            | OpCode::I64LeS
+            | OpCode::I64LeU
+            | OpCode::I64GeS
+            | OpCode::I64GeU
+    )
+}
+
+fn fill_bitwise(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord) {
+    if !is_bitwise(record.opcode) {
+        return;
+    }
+    let (Some(rhs), Some(lhs)) = (record.reads.first(), record.reads.get(1)) else {
+        return;
+    };
+    let bits = |word: Word| {
+        let (lo, hi) = word.to_limbs();
+        lo.as_canonical_u64() | (hi.as_canonical_u64() << 32)
+    };
+    let (left, right) = (bits(lhs.value), bits(rhs.value));
+    for i in 0..BW_NIBBLES {
+        let a = (left >> (4 * i)) & 0xf;
+        let b = (right >> (4 * i)) & 0xf;
+        columns[BW_A_BASE + i][row] = Felt::new(a);
+        columns[BW_B_BASE + i][row] = Felt::new(b);
+        columns[BW_P_BASE + i][row] = Felt::new(a & b);
+    }
+}
+
+fn is_bitwise(op: OpCode) -> bool {
+    matches!(
+        op,
+        OpCode::I32And
+            | OpCode::I32Or
+            | OpCode::I32Xor
+            | OpCode::I64And
+            | OpCode::I64Or
+            | OpCode::I64Xor
+    )
+}
+
+fn fill_popcount(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord) {
+    if !matches!(record.opcode, OpCode::I32Popcnt | OpCode::I64Popcnt) {
+        return;
+    }
+    let Some(operand) = record.reads.first() else {
+        return;
+    };
+    let (lo, hi) = operand.value.to_limbs();
+    let bits = lo.as_canonical_u64() | (hi.as_canonical_u64() << 32);
+    for i in 0..POPCNT_BYTES {
+        let byte = (bits >> (8 * i)) & 0xff;
+        columns[POPCNT_BYTE_BASE + i][row] = Felt::new(byte);
+        columns[POPCNT_PC_BASE + i][row] = Felt::new(u64::from((byte as u32).count_ones()));
     }
 }
 

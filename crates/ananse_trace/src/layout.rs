@@ -18,7 +18,7 @@
 //!    `(addr, ts, lo, hi, is_write, active)`, plus the per-entry sortedness witness
 //!    ([`SORTED_BASE`]);
 //! 4. the one-hot opcode selector block ([`SELECTOR_BASE`]);
-//! 5. the per-opcode arithmetic witness block ([`witness_base`]).
+//! 5. the per-opcode witness block ([`witness_base`]).
 //!
 //! Every runtime value is carried as two little-endian 32-bit limbs `(lo, hi)` with
 //! the value equal to `lo + hi * 2^32`, because a single Goldilocks element cannot
@@ -111,13 +111,34 @@ pub const fn sorted_slot(slot: usize) -> usize {
 /// `[SELECTOR_BASE, SELECTOR_BASE + NUM_SELECTORS)`.
 pub const SELECTOR_BASE: usize = SORTED_BASE + BUS_SLOTS * SORTED_SLOT_COLS;
 
-/// First column of the per-opcode arithmetic witness block, immediately after the selectors.
+/// First column of the per-opcode witness block, immediately after the selectors.
 pub const fn witness_base() -> usize {
     SELECTOR_BASE + NUM_SELECTORS
 }
 
-/// Arithmetic-witness columns shared by the value-bus opcode families.
+/// Witness columns shared by the value-bus opcode families.
 pub const WITNESS_COLS: usize = 6;
+
+/// Column offsets within the per-opcode witness block, from [`witness_base`].
+pub mod witness {
+    /// Borrow out of the low-limb difference in a two-limb comparison.
+    pub const BORROW_LO: usize = 0;
+    /// Borrow out of the high-limb difference: the unsigned less-than result.
+    pub const BORROW_HI: usize = 1;
+    /// Sign bit of the left comparison operand, or of the sign-extension source.
+    pub const SIGN_A: usize = 2;
+    /// Sign bit of the right comparison operand.
+    pub const SIGN_B: usize = 3;
+    /// One when the two compared values are equal.
+    pub const EQUAL: usize = 4;
+    /// Inverse witness pinning [`EQUAL`] through the is-zero gadget.
+    pub const INV: usize = 5;
+}
+
+/// Absolute column of a witness-block slot named in [`witness`].
+pub const fn wit(offset: usize) -> usize {
+    witness_base() + offset
+}
 
 /// Entries in the range-check byte table: the 8-bit alphabet `{0, ..., 255}`.
 pub const RANGE_TABLE_SIZE: usize = 256;
@@ -145,10 +166,63 @@ pub const fn rc_gap(pair: usize) -> usize {
     RC_GAP_BASE + pair * GAP_BYTES
 }
 
-/// Range-check witness columns.
-pub const RANGE_COLS: usize = 2 * LIMB_BYTES + BUS_SLOTS * GAP_BYTES;
+/// Bytes decomposing one sign-extraction remainder: the value below its sign bit as
+/// four bytes, plus the doubled top byte whose byte-table membership forces that
+/// remainder under `2^31`.
+pub const SIGN_BYTES: usize = LIMB_BYTES + 1;
+
+/// First byte column of the low-limb comparison difference, laid out after the
+/// ordering gaps.
+pub const RC_CMP_DLO: usize = RANGE_BASE + 2 * LIMB_BYTES + BUS_SLOTS * GAP_BYTES;
+/// First byte column of the high-limb comparison difference.
+pub const RC_CMP_DHI: usize = RC_CMP_DLO + LIMB_BYTES;
+/// First byte column of the left operand's sign-extraction remainder.
+pub const RC_SIGN_A: usize = RC_CMP_DHI + LIMB_BYTES;
+/// First byte column of the right operand's sign-extraction remainder.
+pub const RC_SIGN_B: usize = RC_SIGN_A + SIGN_BYTES;
+
+/// Range-check columns the comparison family adds: the two limb differences and the
+/// two operand sign-extraction remainders.
+pub const CMP_RANGE_COLS: usize = 2 * LIMB_BYTES + 2 * SIGN_BYTES;
+
+/// Range-check witness columns: the written-value limbs, the sortedness gaps, and
+/// the comparison family's differences and sign remainders.
+pub const RANGE_COLS: usize = 2 * LIMB_BYTES + BUS_SLOTS * GAP_BYTES + CMP_RANGE_COLS;
+
+/// Four-bit nibbles per 64-bit operand in the bitwise decomposition. The bitwise
+/// AND is resolved a nibble at a time against a 16x16 lookup table, so `or` and
+/// `xor` follow from `a + b - and` and `a + b - 2*and`.
+pub const BW_NIBBLES: usize = 16;
+
+/// First column of the bitwise family's per-nibble witnesses: the left operand's
+/// nibbles.
+pub const BW_A_BASE: usize = RANGE_BASE + RANGE_COLS;
+/// First column of the right operand's nibbles.
+pub const BW_B_BASE: usize = BW_A_BASE + BW_NIBBLES;
+/// First column of the looked-up bitwise-AND nibbles.
+pub const BW_P_BASE: usize = BW_B_BASE + BW_NIBBLES;
+
+/// Bitwise witness columns: the left, right, and AND nibble groups.
+pub const BITWISE_COLS: usize = 3 * BW_NIBBLES;
+
+/// Bytes decomposing a 64-bit operand in the population-count lookup.
+pub const POPCNT_BYTES: usize = 2 * LIMB_BYTES;
+
+/// First column of the population-count operand bytes.
+pub const POPCNT_BYTE_BASE: usize = BW_P_BASE + BW_NIBBLES;
+/// First column of the per-byte looked-up population counts.
+pub const POPCNT_PC_BASE: usize = POPCNT_BYTE_BASE + POPCNT_BYTES;
+
+/// Population-count witness columns: the operand bytes and their popcounts.
+pub const POPCNT_COLS: usize = 2 * POPCNT_BYTES;
+
+/// Column carrying a program point's first static datum, bound to the module by the
+/// pc-keyed data-ROM lookup.
+pub const PC_DATA_A: usize = POPCNT_PC_BASE + POPCNT_BYTES;
+/// Column carrying a program point's second static datum.
+pub const PC_DATA_B: usize = PC_DATA_A + 1;
 
 /// Total number of main-trace columns.
 pub const fn main_width() -> usize {
-    RANGE_BASE + RANGE_COLS
+    PC_DATA_B + 1
 }

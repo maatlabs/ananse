@@ -23,6 +23,24 @@ pub fn global_initializers(module: &Module) -> Result<Vec<Word>> {
     Ok(Image::parse(module.bytes())?.globals)
 }
 
+pub fn function_constants(module: &Module, func_index: u32) -> Result<Vec<Option<u64>>> {
+    let image = Image::parse(module.bytes())?;
+    let func = image
+        .funcs
+        .iter()
+        .find(|f| f.func_index == func_index)
+        .ok_or_else(|| exec_error::inconsistent("no defined function for the requested index"))?;
+    Ok(func.ops.iter().map(operator_constant).collect())
+}
+
+fn operator_constant(op: &Operator) -> Option<u64> {
+    match op {
+        Operator::I32Const { value } => Some(u64::from(*value as u32)),
+        Operator::I64Const { value } => Some(*value as u64),
+        _ => None,
+    }
+}
+
 fn operator_to_opcode(op: &Operator) -> Result<OpCode> {
     let opcode = match op {
         Operator::Unreachable => OpCode::Unreachable,

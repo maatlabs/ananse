@@ -1,12 +1,4 @@
-//! Bitwise `and`/`or`/`xor` value relations, resolved through a nibble AND-table
-//! LogUp lookup.
-//!
-//! Each operand splits into sixteen four-bit nibbles. A logderivative lookup against
-//! a `16 x 16` table proves every nibble triple `(a, b, a & b)` is a genuine bitwise
-//! AND, which simultaneously pins each input nibble into `[0, 16)`. The decomposition
-//! constraints tie those nibbles to the operands on the bus, and the two other
-//! operators follow arithmetically per nibble with no inter-nibble carries: `a | b =
-//! a + b - (a & b)` and `a ^ b = a + b - 2 (a & b)`.
+//! Bitwise `and`/`or`/`xor` value relations, resolved through a nibble AND-table LogUp lookup.
 
 use std::iter::once;
 
@@ -15,15 +7,14 @@ use ananse_trace::layout::{BW_A_BASE, BW_B_BASE, BW_NIBBLES, BW_P_BASE, SELECTOR
 use ananse_trace::selector::opcode_index;
 use p3_air::{ExtensionBuilder, PermutationAirBuilder, WindowAccess};
 use p3_field::{Dup, Field, PrimeCharacteristicRing, PrimeField64};
-use p3_goldilocks::Goldilocks as Felt;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 
-use crate::bus::BusSlot;
-use crate::{
-    AUX_BW_CHANNEL_BASE, AUX_BW_MULT, AUX_BW_TABLE, AirError, CHALLENGE_BITWISE_DENOM,
-    CHALLENGE_BITWISE_FOLD, Ext, Result,
+use super::{
+    AUX_BW_CHANNEL_BASE, AUX_BW_MULT, AUX_BW_TABLE, CHALLENGE_BITWISE_DENOM, CHALLENGE_BITWISE_FOLD,
 };
+use crate::bus::BusSlot;
+use crate::{AirError, Felt, QuadExt, Result};
 
 /// Entries in the nibble AND-table: every ordered pair of four-bit values.
 const AND_TABLE_SIZE: usize = 256;
@@ -163,7 +154,11 @@ pub fn and_table(length: usize) -> [Vec<Felt>; 3] {
     ]
 }
 
-pub(crate) fn columns(main: &RowMajorMatrix<Felt>, fold: Ext, denom: Ext) -> Result<Vec<Vec<Ext>>> {
+pub(crate) fn columns(
+    main: &RowMajorMatrix<Felt>,
+    fold: QuadExt,
+    denom: QuadExt,
+) -> Result<Vec<Vec<QuadExt>>> {
     let height = main.height();
     let width = main.width();
     let row = |r: usize| &main.values[r * width..(r + 1) * width];
@@ -180,9 +175,9 @@ pub(crate) fn columns(main: &RowMajorMatrix<Felt>, fold: Ext, denom: Ext) -> Res
         [a, b, p]
             .into_iter()
             .rev()
-            .fold(Ext::ZERO, |acc, term| acc * fold + Ext::from(term))
+            .fold(QuadExt::ZERO, |acc, term| acc * fold + QuadExt::from(term))
     };
-    let reciprocal = |value: Ext| value.try_inverse().ok_or(AirError::DegenerateChallenge);
+    let reciprocal = |value: QuadExt| value.try_inverse().ok_or(AirError::DegenerateChallenge);
     let table_at = |i: usize| -> (Felt, Felt, Felt) {
         let (a, b) = if i < AND_TABLE_SIZE {
             ((i >> 4) as u64, (i & 0xf) as u64)
@@ -192,19 +187,19 @@ pub(crate) fn columns(main: &RowMajorMatrix<Felt>, fold: Ext, denom: Ext) -> Res
         (Felt::new(a), Felt::new(b), Felt::new(a & b))
     };
 
-    let mut multiplicity = vec![Ext::ZERO; height];
+    let mut multiplicity = vec![QuadExt::ZERO; height];
     for (value, &count) in counts.iter().enumerate() {
-        multiplicity[value] = Ext::from(Felt::new(count));
+        multiplicity[value] = QuadExt::from(Felt::new(count));
     }
 
-    let mut table_sum = vec![Ext::ZERO; height];
+    let mut table_sum = vec![QuadExt::ZERO; height];
     for i in 0..summed {
         let (a, b, p) = table_at(i);
         let step = multiplicity[i] * reciprocal(denom - fold_row(a, b, p))?;
         table_sum[i + 1] = table_sum[i] + step;
     }
 
-    let mut channels: Vec<Vec<Ext>> = vec![vec![Ext::ZERO; height]; BW_NIBBLES];
+    let mut channels: Vec<Vec<QuadExt>> = vec![vec![QuadExt::ZERO; height]; BW_NIBBLES];
     for (i, accumulator) in channels.iter_mut().enumerate() {
         for r in 0..summed {
             let (a, b, p) = (

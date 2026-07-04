@@ -6,15 +6,14 @@ use std::collections::HashMap;
 use ananse_trace::layout::BUS_SLOTS;
 use p3_air::{ExtensionBuilder, PermutationAirBuilder, WindowAccess};
 use p3_field::{Dup, Field, PrimeCharacteristicRing, PrimeField64};
-use p3_goldilocks::Goldilocks as Felt;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 
-use crate::bus::SortedEntry;
-use crate::{
-    AUX_BND_CHANNEL_BASE, AUX_BND_MULT, AUX_BND_TABLE, AirError, CHALLENGE_BOUNDARY,
-    CHALLENGE_FOLD, Ext,
+use super::{
+    AUX_BND_CHANNEL_BASE, AUX_BND_MULT, AUX_BND_TABLE, CHALLENGE_BOUNDARY, CHALLENGE_FOLD,
 };
+use crate::bus::SortedEntry;
+use crate::{AirError, Felt, QuadExt};
 
 pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
     let main = builder.main();
@@ -76,9 +75,6 @@ pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
         .assert_zero_ext(sum_channels - Into::<AB::ExprEF>::into(sm_cur));
 }
 
-/// The three verifier-filled periodic columns carrying the initial-state `table`: row
-/// `i` holds the address, low limb, and high limb of table entry `i`, zero-padded past
-/// the table's end where the multiplicity is zero. `length` is the padded trace height.
 pub(crate) fn periodic_columns(table: &[(u64, Felt, Felt)], length: usize) -> [Vec<Felt>; 3] {
     let column = |select: fn((u64, Felt, Felt)) -> Felt| -> Vec<Felt> {
         (0..length)
@@ -95,9 +91,9 @@ pub(crate) fn periodic_columns(table: &[(u64, Felt, Felt)], length: usize) -> [V
 pub(crate) fn columns(
     main: &RowMajorMatrix<Felt>,
     table: &[(u64, Felt, Felt)],
-    fold: Ext,
-    denom: Ext,
-) -> Result<Vec<Vec<Ext>>, AirError> {
+    fold: QuadExt,
+    denom: QuadExt,
+) -> Result<Vec<Vec<QuadExt>>, AirError> {
     let height = main.height();
     let width = main.width();
     let row = |r: usize| &main.values[r * width..(r + 1) * width];
@@ -112,10 +108,10 @@ pub(crate) fn columns(
         });
     }
 
-    let folded = |addr: Felt, lo: Felt, hi: Felt| -> Ext {
-        Ext::from(addr) + fold * Ext::from(lo) + fold * fold * Ext::from(hi)
+    let folded = |addr: Felt, lo: Felt, hi: Felt| -> QuadExt {
+        QuadExt::from(addr) + fold * QuadExt::from(lo) + fold * fold * QuadExt::from(hi)
     };
-    let reciprocal = |denominator: Ext| {
+    let reciprocal = |denominator: QuadExt| {
         denominator
             .try_inverse()
             .ok_or(AirError::DegenerateChallenge)
@@ -151,15 +147,15 @@ pub(crate) fn columns(
 
     let table_at = |i: usize| table.get(i).copied().unwrap_or((0, Felt::ZERO, Felt::ZERO));
 
-    let mut multiplicity = vec![Ext::ZERO; height];
+    let mut multiplicity = vec![QuadExt::ZERO; height];
     for (i, &count) in counts.iter().enumerate() {
-        multiplicity[i] = Ext::from(Felt::new(count));
+        multiplicity[i] = QuadExt::from(Felt::new(count));
     }
 
-    let mut table_sum = vec![Ext::ZERO; height];
+    let mut table_sum = vec![QuadExt::ZERO; height];
     for i in 0..summed {
-        let step = if multiplicity[i] == Ext::ZERO {
-            Ext::ZERO
+        let step = if multiplicity[i] == QuadExt::ZERO {
+            QuadExt::ZERO
         } else {
             let (addr, lo, hi) = table_at(i);
             multiplicity[i] * reciprocal(denom - folded(Felt::new(addr), lo, hi))?
@@ -167,14 +163,14 @@ pub(crate) fn columns(
         table_sum[i + 1] = table_sum[i] + step;
     }
 
-    let mut channels: Vec<Vec<Ext>> = vec![vec![Ext::ZERO; height]; BUS_SLOTS];
+    let mut channels: Vec<Vec<QuadExt>> = vec![vec![QuadExt::ZERO; height]; BUS_SLOTS];
     for (k, accumulator) in channels.iter_mut().enumerate() {
         for i in 0..summed {
             let entry = SortedEntry::read(row(i), k);
             let step = if is_fresh_read(entry) {
                 reciprocal(denom - folded(entry.addr, entry.lo, entry.hi))?
             } else {
-                Ext::ZERO
+                QuadExt::ZERO
             };
             accumulator[i + 1] = accumulator[i] + step;
         }
@@ -186,7 +182,6 @@ pub(crate) fn columns(
         .collect())
 }
 
-/// Whether a sorted-log entry is a fresh read: a real, address-opening read.
 fn is_fresh_read(entry: SortedEntry<Felt>) -> bool {
     entry.active == Felt::ONE && entry.same_addr == Felt::ZERO && entry.is_write == Felt::ZERO
 }

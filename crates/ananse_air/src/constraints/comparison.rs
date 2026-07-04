@@ -1,23 +1,4 @@
 //! Integer comparison, `eqz`, and signed sign-extension value relations.
-//!
-//! Every comparison pops two operands and pushes an `i32` boolean; `eqz` and
-//! `i64.extend_i32_s` are the unary members that share this file's logic. Three
-//! gadgets, all carried on the shared witness block and the comparison range-check
-//! columns, decide every result:
-//!
-//! * a two-limb *borrow subtraction* `lhs - rhs`, whose high-limb borrow is exactly
-//!   the unsigned less-than bit and whose per-limb differences are range-checked to
-//!   `[0, 2^32)`;
-//! * an *is-zero* gadget on the single field value `(lhs.lo - rhs.lo) + (lhs.hi -
-//!   rhs.hi) * 2^32`---injective because both operands' limbs live in `[0, 2^32)`, so
-//!   it vanishes exactly at equality---pinning the equality bit through one inverse;
-//! * a *sign extraction* that splits an operand's sign-carrying limb as `rest + s *
-//!   2^31` with `rest` range-checked below `2^31`, yielding the top bit `s`.
-//!
-//! Signed ordering follows from the identity `lt_s = lt_u XOR sign_lhs XOR sign_rhs`,
-//! and the remaining orders are the Boolean combinations `ge = 1 - lt`, `le = lt +
-//! eq`, `gt = 1 - lt - eq`, `ne = 1 - eq`. `i64.extend_i32_s` reuses the left
-//! operand's sign extraction to fill the widened high limb with `s * (2^32 - 1)`.
 
 use ananse_executor::OpCode;
 use ananse_trace::layout::{
@@ -26,8 +7,8 @@ use ananse_trace::layout::{
 use ananse_trace::selector::opcode_index;
 use p3_air::AirBuilder;
 use p3_field::{Dup, PrimeCharacteristicRing};
-use p3_goldilocks::Goldilocks as Felt;
 
+use crate::Felt;
 use crate::bus::BusSlot;
 
 /// The twenty binary comparison operators.

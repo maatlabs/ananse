@@ -1,16 +1,10 @@
 //! Read-consistency over the address-sorted access log.
-//!
-//! The sorted log lays every access in non-decreasing `(address, timestamp)` order,
-//! [`BUS_SLOTS`] entries per row. Reading it as one flat sequence, each entry is
-//! constrained against the one before it: the active entries form a prefix (no real
-//! access hides behind a padding entry), entries that share an address agree on it,
-//! and a read of a continuing address returns the value the previous access left.
 
 use ananse_trace::layout::BUS_SLOTS;
 use p3_air::AirBuilder;
 use p3_field::{Dup, PrimeCharacteristicRing};
-use p3_goldilocks::Goldilocks as Felt;
 
+use crate::Felt;
 use crate::bus::SortedEntry;
 
 pub(crate) fn evaluate<AB: AirBuilder<F = Felt>>(

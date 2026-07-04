@@ -1,20 +1,14 @@
-//! Bus-to-sorted-log consistency permutation: a logderivative multiset-equality
-//! argument.
-//!
-//! Read-consistency proves the address-sorted log is internally coherent, but only
-//! once that log is the *same* accesses the machine actually performed. This module
-//! ties the execution-order value bus to the sorted log by proving the two are one
-//! multiset.
+//! Bus-to-sorted-log consistency permutation: a logderivative multiset-equality argument.
 
 use ananse_trace::layout::{BUS_SLOTS, COL_CLK};
 use p3_air::{ExtensionBuilder, PermutationAirBuilder, WindowAccess};
 use p3_field::{Dup, Field, PrimeCharacteristicRing};
-use p3_goldilocks::Goldilocks as Felt;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 
+use super::{AUX_BUS_ACC, AUX_SORTED_ACC, CHALLENGE_DENOM, CHALLENGE_FOLD};
 use crate::bus::{BusSlot, SortedEntry};
-use crate::{AUX_BUS_ACC, AUX_SORTED_ACC, AirError, CHALLENGE_DENOM, CHALLENGE_FOLD, Ext, Result};
+use crate::{AirError, Felt, QuadExt, Result};
 
 pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
     let main = builder.main();
@@ -85,15 +79,15 @@ pub(crate) fn evaluate<AB: PermutationAirBuilder<F = Felt>>(builder: &mut AB) {
 
 pub(crate) fn consistency_columns(
     main: &RowMajorMatrix<Felt>,
-    denom: Ext,
-    fold: Ext,
-) -> Result<(Vec<Ext>, Vec<Ext>)> {
+    denom: QuadExt,
+    fold: QuadExt,
+) -> Result<(Vec<QuadExt>, Vec<QuadExt>)> {
     let height = main.height();
     let width = main.width();
     let row = |r: usize| &main.values[r * width..(r + 1) * width];
 
-    let mut bus_acc = vec![Ext::ZERO; height];
-    let mut sorted_acc = vec![Ext::ZERO; height];
+    let mut bus_acc = vec![QuadExt::ZERO; height];
+    let mut sorted_acc = vec![QuadExt::ZERO; height];
 
     for r in 0..height.saturating_sub(1) {
         bus_acc[r + 1] = bus_acc[r] + bus_contribution(row(r), denom, fold)?;
@@ -102,9 +96,9 @@ pub(crate) fn consistency_columns(
     Ok((bus_acc, sorted_acc))
 }
 
-fn bus_contribution(row: &[Felt], denom: Ext, fold: Ext) -> Result<Ext> {
+fn bus_contribution(row: &[Felt], denom: QuadExt, fold: QuadExt) -> Result<QuadExt> {
     let clk = row[COL_CLK];
-    (0..BUS_SLOTS).try_fold(Ext::ZERO, |acc, s| {
+    (0..BUS_SLOTS).try_fold(QuadExt::ZERO, |acc, s| {
         let slot = BusSlot::read(row, s);
         if slot.active == Felt::ZERO {
             return Ok(acc);
@@ -115,8 +109,8 @@ fn bus_contribution(row: &[Felt], denom: Ext, fold: Ext) -> Result<Ext> {
     })
 }
 
-fn sorted_contribution(row: &[Felt], denom: Ext, fold: Ext) -> Result<Ext> {
-    (0..BUS_SLOTS).try_fold(Ext::ZERO, |acc, e| {
+fn sorted_contribution(row: &[Felt], denom: QuadExt, fold: QuadExt) -> Result<QuadExt> {
+    (0..BUS_SLOTS).try_fold(QuadExt::ZERO, |acc, e| {
         let entry = SortedEntry::read(row, e);
         if entry.active == Felt::ZERO {
             return Ok(acc);
@@ -133,14 +127,23 @@ fn sorted_contribution(row: &[Felt], denom: Ext, fold: Ext) -> Result<Ext> {
     })
 }
 
-fn fold_access(challenge: Ext, addr: Felt, ts: Felt, lo: Felt, hi: Felt, is_write: Felt) -> Ext {
+fn fold_access(
+    challenge: QuadExt,
+    addr: Felt,
+    ts: Felt,
+    lo: Felt,
+    hi: Felt,
+    is_write: Felt,
+) -> QuadExt {
     [addr, ts, lo, hi, is_write]
         .into_iter()
         .rev()
-        .fold(Ext::ZERO, |acc, term| acc * challenge + Ext::from(term))
+        .fold(QuadExt::ZERO, |acc, term| {
+            acc * challenge + QuadExt::from(term)
+        })
 }
 
-fn reciprocal(denom: Ext, folded: Ext) -> Result<Ext> {
+fn reciprocal(denom: QuadExt, folded: QuadExt) -> Result<QuadExt> {
     (denom - folded)
         .try_inverse()
         .ok_or(AirError::DegenerateChallenge)

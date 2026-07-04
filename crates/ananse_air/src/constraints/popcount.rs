@@ -9,15 +9,15 @@ use ananse_trace::layout::{
 use ananse_trace::selector::opcode_index;
 use p3_air::{ExtensionBuilder, PermutationAirBuilder, WindowAccess};
 use p3_field::{Dup, Field, PrimeCharacteristicRing, PrimeField64};
-use p3_goldilocks::Goldilocks as Felt;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 
-use crate::bus::BusSlot;
-use crate::{
-    AUX_PC_CHANNEL_BASE, AUX_PC_MULT, AUX_PC_TABLE, AirError, CHALLENGE_POPCOUNT_DENOM,
-    CHALLENGE_POPCOUNT_FOLD, Ext, Result,
+use super::{
+    AUX_PC_CHANNEL_BASE, AUX_PC_MULT, AUX_PC_TABLE, CHALLENGE_POPCOUNT_DENOM,
+    CHALLENGE_POPCOUNT_FOLD,
 };
+use crate::bus::BusSlot;
+use crate::{AirError, Felt, QuadExt, Result};
 
 /// Entries in the popcount table: one per byte value.
 const TABLE_SIZE: usize = 256;
@@ -117,7 +117,11 @@ pub fn table(length: usize) -> Vec<Felt> {
         .collect()
 }
 
-pub(crate) fn columns(main: &RowMajorMatrix<Felt>, fold: Ext, denom: Ext) -> Result<Vec<Vec<Ext>>> {
+pub(crate) fn columns(
+    main: &RowMajorMatrix<Felt>,
+    fold: QuadExt,
+    denom: QuadExt,
+) -> Result<Vec<Vec<QuadExt>>> {
     let height = main.height();
     let width = main.width();
     let row = |r: usize| &main.values[r * width..(r + 1) * width];
@@ -130,8 +134,9 @@ pub(crate) fn columns(main: &RowMajorMatrix<Felt>, fold: Ext, denom: Ext) -> Res
         }
     }
 
-    let fold_row = |byte: Felt, popcount: Felt| Ext::from(popcount) * fold + Ext::from(byte);
-    let reciprocal = |value: Ext| value.try_inverse().ok_or(AirError::DegenerateChallenge);
+    let fold_row =
+        |byte: Felt, popcount: Felt| QuadExt::from(popcount) * fold + QuadExt::from(byte);
+    let reciprocal = |value: QuadExt| value.try_inverse().ok_or(AirError::DegenerateChallenge);
     let table_at = |i: usize| -> (Felt, Felt) {
         if i < TABLE_SIZE {
             (
@@ -143,19 +148,19 @@ pub(crate) fn columns(main: &RowMajorMatrix<Felt>, fold: Ext, denom: Ext) -> Res
         }
     };
 
-    let mut multiplicity = vec![Ext::ZERO; height];
+    let mut multiplicity = vec![QuadExt::ZERO; height];
     for (value, &count) in counts.iter().enumerate() {
-        multiplicity[value] = Ext::from(Felt::new(count));
+        multiplicity[value] = QuadExt::from(Felt::new(count));
     }
 
-    let mut table_sum = vec![Ext::ZERO; height];
+    let mut table_sum = vec![QuadExt::ZERO; height];
     for i in 0..summed {
         let (byte, popcount) = table_at(i);
         let step = multiplicity[i] * reciprocal(denom - fold_row(byte, popcount))?;
         table_sum[i + 1] = table_sum[i] + step;
     }
 
-    let mut channels: Vec<Vec<Ext>> = vec![vec![Ext::ZERO; height]; POPCNT_BYTES];
+    let mut channels: Vec<Vec<QuadExt>> = vec![vec![QuadExt::ZERO; height]; POPCNT_BYTES];
     for (i, accumulator) in channels.iter_mut().enumerate() {
         for r in 0..summed {
             let (byte, popcount) = (row(r)[POPCNT_BYTE_BASE + i], row(r)[POPCNT_PC_BASE + i]);
