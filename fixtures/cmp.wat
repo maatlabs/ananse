@@ -1,0 +1,10 @@
+(module
+  (func (export "lt_u") (param i64 i64) (result i32) (i64.lt_u (local.get 0) (local.get 1)))
+  (func (export "lt_s") (param i64 i64) (result i32) (i64.lt_s (local.get 0) (local.get 1)))
+  (func (export "eq") (param i64 i64) (result i32) (i64.eq (local.get 0) (local.get 1)))
+  (func (export "ne") (param i64 i64) (result i32) (i64.ne (local.get 0) (local.get 1)))
+  (func (export "le_u") (param i64 i64) (result i32) (i64.le_u (local.get 0) (local.get 1)))
+  (func (export "gt_u") (param i64 i64) (result i32) (i64.gt_u (local.get 0) (local.get 1)))
+  (func (export "ge_s") (param i64 i64) (result i32) (i64.ge_s (local.get 0) (local.get 1)))
+  (func (export "eqz") (param i64) (result i32) (i64.eqz (local.get 0)))
+)

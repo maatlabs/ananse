@@ -2,10 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
-use ananse_air::{AnanseAir, Ext, NUM_CHALLENGES, build_permutation_trace, program_rom};
+use ananse_air::{
+    AnanseAir, NUM_CHALLENGES, QuadExt, build_permutation_trace, program_data, program_rom,
+};
 use ananse_decoder::{ImportEntry, Module};
 use ananse_executor::{
-    Entry, ExecuteError, Host, HostAction, Word, execute, function_opcodes, global_initializers,
+    Entry, ExecuteError, Host, HostAction, Word, execute, function_constants, function_opcodes,
+    global_initializers,
 };
 use ananse_lift::lift;
 use ananse_trace::Trace;
@@ -18,17 +21,26 @@ use p3_matrix::stack::ViewPair;
 use wasmparser::WasmFeatures;
 
 pub const WAT_FILES: &[&str] = &[
+    "bitwise.wat",
+    "branch.wat",
+    "cmp.wat",
+    "const.wat",
+    "conv.wat",
+    "ext_s.wat",
     "fibonacci.wat",
     "func_add.wat",
     "func_call.wat",
     "func_local.wat",
     "func_lts.wat",
     "func_sub.wat",
+    "global.wat",
     "hello_world.wat",
     "i32_const.wat",
     "i32_store.wat",
     "local_set.wat",
+    "local_tee.wat",
     "memory.wat",
+    "select.wat",
 ];
 
 pub const WAT_SNIPPETS: &[(&str, &str)] = &[
@@ -77,6 +89,14 @@ pub const SINGLE_FRAME_FIXTURES: &[&str] = &[
     "func_lts.wat",
     "func_local.wat",
     "local_set.wat",
+    "local_tee.wat",
+    "global.wat",
+    "conv.wat",
+    "cmp.wat",
+    "ext_s.wat",
+    "bitwise.wat",
+    "select.wat",
+    "branch.wat",
     "i32_store.wat",
 ];
 
@@ -90,29 +110,15 @@ pub fn trace_of(bytes: &[u8]) -> Trace {
     Trace::build(&program, records, &[], &globals).expect("build")
 }
 
-pub fn trace_and_rom(bytes: &[u8]) -> (Trace, Vec<Felt>) {
-    let module = Module::decode(bytes).expect("decode");
-    let program = lift(&module).expect("lift");
-    let globals = global_initializers(&module).expect("globals");
-    let mut host = TestHost::default();
-    let mut records = Vec::new();
-    execute(&module, &Entry::Auto, &[], &mut host, &mut records).expect("execute");
-    let func_index = records
-        .first()
-        .expect("execution produces records")
-        .func_index;
-    let function = program
-        .functions
-        .iter()
-        .find(|f| f.func_index == func_index)
-        .expect("executed function was lifted");
-    let opcodes = function_opcodes(&module, func_index).expect("opcodes");
-    let rom = program_rom(&opcodes, function).expect("program ROM");
-    let trace = Trace::build(&program, records, &[], &globals).expect("build");
-    (trace, rom)
+pub fn trace_and_rom(bytes: &[u8]) -> (Trace, Vec<Felt>, Vec<(u32, u32, u32)>) {
+    trace_and_rom_entry(bytes, &Entry::Auto, &[])
 }
 
-pub fn trace_and_rom_entry(bytes: &[u8], entry: &Entry, args: &[Word]) -> (Trace, Vec<Felt>) {
+pub fn trace_and_rom_entry(
+    bytes: &[u8],
+    entry: &Entry,
+    args: &[Word],
+) -> (Trace, Vec<Felt>, Vec<(u32, u32, u32)>) {
     let module = Module::decode(bytes).expect("decode");
     let program = lift(&module).expect("lift");
     let globals = global_initializers(&module).expect("globals");
@@ -130,8 +136,10 @@ pub fn trace_and_rom_entry(bytes: &[u8], entry: &Entry, args: &[Word]) -> (Trace
         .expect("executed function was lifted");
     let opcodes = function_opcodes(&module, func_index).expect("opcodes");
     let rom = program_rom(&opcodes, function).expect("program ROM");
+    let constants = function_constants(&module, func_index).expect("constants");
+    let data = program_data(&constants, function).expect("program data");
     let trace = Trace::build(&program, records, args, &globals).expect("build");
-    (trace, rom)
+    (trace, rom, data)
 }
 
 #[derive(Default)]
@@ -209,9 +217,10 @@ pub fn wat_from_str(wat: &str) -> Vec<u8> {
     wat::parse_str(wat).expect("WAT assembles to WASM")
 }
 
-pub fn air_for(trace: &Trace, rom: &[Felt]) -> AnanseAir {
+pub fn air_for(trace: &Trace, rom: &[Felt], data: &[(u32, u32, u32)]) -> AnanseAir {
     AnanseAir::new(
         rom,
+        data,
         trace.length(),
         trace.stack_base(),
         trace.initial_state(),
@@ -220,17 +229,26 @@ pub fn air_for(trace: &Trace, rom: &[Felt]) -> AnanseAir {
 
 /// Fixed stand-ins for the Fiat--Shamir permutation challenges the prover draws,
 /// letting the control-flow lookup, consistency permutation, range-check byte-table
-/// lookup, and boundary lookup be exercised without a prover, in [`NUM_CHALLENGES`]
-/// order: the control-flow folding challenge, the consistency permutation's
-/// denominator and access-folding challenges, the byte-table challenge, and the
-/// boundary lookup's denominator.
-pub fn mock_challenges() -> [Ext; NUM_CHALLENGES] {
+/// lookup, boundary lookup, bitwise AND-table lookup, popcount lookup, and pc-keyed
+/// data-ROM lookup be exercised without a prover, in [`NUM_CHALLENGES`] order: the
+/// control-flow folding challenge, the consistency permutation's denominator and
+/// access-folding challenges, the byte-table challenge, the boundary lookup's
+/// denominator, the AND-table's tuple-fold and denominator challenges, the popcount
+/// table's pair-fold and denominator challenges, and the data-ROM's tuple-fold and
+/// denominator challenges.
+pub fn mock_challenges() -> [QuadExt; NUM_CHALLENGES] {
     [
-        Ext::from(Felt::new(0x9e37_79b9_7f4a_7c15)),
-        Ext::from(Felt::new(0xff51_afd7_ed55_8ccd)),
-        Ext::from(Felt::new(0xc4ce_b9fe_1a85_ec53)),
-        Ext::from(Felt::new(0xbf58_476d_1ce4_e5b9)),
-        Ext::from(Felt::new(0x94d0_49bb_1331_11eb)),
+        QuadExt::from(Felt::new(0x9e37_79b9_7f4a_7c15)),
+        QuadExt::from(Felt::new(0xff51_afd7_ed55_8ccd)),
+        QuadExt::from(Felt::new(0xc4ce_b9fe_1a85_ec53)),
+        QuadExt::from(Felt::new(0xbf58_476d_1ce4_e5b9)),
+        QuadExt::from(Felt::new(0x94d0_49bb_1331_11eb)),
+        QuadExt::from(Felt::new(0x2545_f491_4f6c_dd1d)),
+        QuadExt::from(Felt::new(0x1656_67b1_9e37_79f9)),
+        QuadExt::from(Felt::new(0x6a09_e667_f3bc_c908)),
+        QuadExt::from(Felt::new(0xb056_88c2_b3e6_c1f7)),
+        QuadExt::from(Felt::new(0x3c6e_f372_fe94_f82b)),
+        QuadExt::from(Felt::new(0xa54f_f53a_5f1d_36f1)),
     ]
 }
 
@@ -245,10 +263,11 @@ pub fn main_matrix(columns: &[Vec<Felt>], length: usize) -> RowMajorMatrix<Felt>
 pub fn permutation_of(
     main: &RowMajorMatrix<Felt>,
     rom: &[Felt],
+    data: &[(u32, u32, u32)],
     initial: &[(u64, Felt, Felt)],
-    challenges: [Ext; NUM_CHALLENGES],
-) -> RowMajorMatrix<Ext> {
-    build_permutation_trace(main, rom, initial, challenges).expect("permutation trace")
+    challenges: [QuadExt; NUM_CHALLENGES],
+) -> RowMajorMatrix<QuadExt> {
+    build_permutation_trace(main, rom, data, initial, challenges).expect("permutation trace")
 }
 
 /// Evaluates every AIR constraint on each row of `main` paired with the permutation
@@ -257,8 +276,8 @@ pub fn permutation_of(
 pub fn failing_rows(
     air: &AnanseAir,
     main: &RowMajorMatrix<Felt>,
-    perm: &RowMajorMatrix<Ext>,
-    challenges: [Ext; NUM_CHALLENGES],
+    perm: &RowMajorMatrix<QuadExt>,
+    challenges: [QuadExt; NUM_CHALLENGES],
 ) -> Vec<usize> {
     let height = main.height();
     let main_width = main.width();
