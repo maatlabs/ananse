@@ -1,18 +1,23 @@
 use ananse_decoder::{DecodeError, ExportKind, Module, WASI_MODULE};
-use ananse_tests::{WAT_FILES, wat_from_file, wat_from_str};
+use ananse_tests::{
+    EXAMPLE_FILES, FIXTURE_FILES, wat_from_example, wat_from_fixture, wat_from_str,
+};
 
 #[test]
-fn wat_file_decodes() {
-    for name in WAT_FILES {
-        let bytes = wat_from_file(name);
-        Module::decode(&bytes)
+fn every_program_decodes() {
+    for name in EXAMPLE_FILES {
+        Module::decode(&wat_from_example(name))
+            .unwrap_or_else(|e| panic!("example {name} should decode but errored: {e}"));
+    }
+    for name in FIXTURE_FILES {
+        Module::decode(&wat_from_fixture(name))
             .unwrap_or_else(|e| panic!("fixture {name} should decode but errored: {e}"));
     }
 }
 
 #[test]
 fn hello_world_extracts_wasi_import_and_start_export() {
-    let bytes = wat_from_file("hello_world.wat");
+    let bytes = wat_from_fixture("hello_world.wat");
     let module = Module::decode(&bytes).expect("hello_world.wat decodes");
     let imports = module.imports();
     assert_eq!(imports.len(), 1);
@@ -56,7 +61,7 @@ fn float_typed_global_is_rejected() {
 
 #[test]
 fn import_from_env_is_rejected() {
-    let bytes = wat_from_file("import.wat");
+    let bytes = wat_from_fixture("import.wat");
     match Module::decode(&bytes) {
         Err(DecodeError::ForbiddenImportModule { module }) => {
             assert_eq!(module, "env");

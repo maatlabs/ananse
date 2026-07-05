@@ -1,20 +1,22 @@
 use ananse_decoder::Module;
 use ananse_executor::{Entry, NoHost, OpCode, Transition, Word, execute};
 use ananse_lift::lift;
-use ananse_tests::{SINGLE_FRAME_FIXTURES, TestHost, trace_of, wat_from_file, wat_from_str};
+use ananse_tests::{
+    SINGLE_FRAME_FIXTURES, trace_of, wat_from_example, wat_from_fixture, wat_from_str,
+};
 use ananse_trace::layout::{
     self, BUS_SLOTS, COL_CLK, COL_PC, SELECTOR_BASE, bus_slot, slot, sorted, sorted_slot,
 };
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING};
 use ananse_trace::{Trace, TraceError};
-use maat_field::{Felt, FieldElement};
+use ananse_wasi::WasiSnapshotPreview1;
+use p3_field::PrimeCharacteristicRing;
+use p3_goldilocks::Goldilocks as Felt;
 
 fn column(trace: &Trace, index: usize) -> &[Felt] {
     trace.column_at(index).expect("column in range")
 }
 
-/// Exactly one selector column is one on every row, and the selector block holds only
-/// zeros and ones.
 fn assert_selectors_one_hot(trace: &Trace, name: &str) {
     for row in 0..trace.length() {
         let hot = (0..NUM_SELECTORS)
@@ -31,9 +33,6 @@ fn assert_selectors_one_hot(trace: &Trace, name: &str) {
     }
 }
 
-/// Each operator's reads land on the value bus in consumption order: read `i` sits on
-/// slot `i` as an active load carrying the observed value---the agreement between the
-/// bus and the schedule the address binding then pins to a cell.
 fn assert_reads_land_on_the_bus(trace: &Trace, name: &str) {
     for (row, record) in trace.records().iter().enumerate() {
         for (index, read) in record.reads.iter().enumerate() {
@@ -55,8 +54,6 @@ fn assert_reads_land_on_the_bus(trace: &Trace, name: &str) {
     }
 }
 
-/// The program counter of the next row is the successor the transition selected; a
-/// fall-through advances it by one, a branch to its taken target.
 fn assert_pc_follows_transitions(trace: &Trace, name: &str) {
     let pc = column(trace, COL_PC);
     for (row, record) in trace.records().iter().enumerate() {
@@ -74,7 +71,6 @@ fn assert_pc_follows_transitions(trace: &Trace, name: &str) {
     }
 }
 
-/// The active sorted-log entries in flat `(row, slot)` order.
 fn active_sorted(trace: &Trace) -> Vec<(Felt, Felt, Felt, Felt, Felt)> {
     let mut entries = Vec::new();
     'outer: for row in 0..trace.length() {
@@ -95,9 +91,6 @@ fn active_sorted(trace: &Trace) -> Vec<(Felt, Felt, Felt, Felt, Felt)> {
     entries
 }
 
-/// The sorted log's `same_addr` flags agree with the addresses: the first entry opens
-/// a run, an entry marked continuing repeats the previous address, and one marked
-/// fresh differs.
 fn assert_sorted_log_consistent(trace: &Trace, name: &str) {
     let mut previous: Option<Felt> = None;
     for (addr, _, _, _, same_addr) in active_sorted(trace) {
@@ -115,7 +108,7 @@ fn assert_sorted_log_consistent(trace: &Trace, name: &str) {
 #[test]
 fn single_frame_fixtures_satisfy_trace_invariants() {
     for name in SINGLE_FRAME_FIXTURES {
-        let trace = trace_of(&wat_from_file(name));
+        let trace = trace_of(&wat_from_fixture(name));
         assert_selectors_one_hot(&trace, name);
         assert_reads_land_on_the_bus(&trace, name);
         assert_pc_follows_transitions(&trace, name);
@@ -140,23 +133,29 @@ fn single_frame_fixtures_satisfy_trace_invariants() {
 fn recursive_and_cross_function_calls_are_unsupported() {
     // `fib(5)` recurses past its base case; `call_doubler` calls a defined helper
     // unconditionally. Both cross a defined-function call frame.
-    let cases: &[(&str, Entry, &[Word])] = &[
+    let cases: [(&str, Vec<u8>, Entry, &[Word]); 2] = [
         (
             "fibonacci.wat",
+            wat_from_example("fibonacci.wat"),
             Entry::Export("fib".into()),
             &[Word::I32(5)],
         ),
-        ("func_call.wat", Entry::Auto, &[]),
+        (
+            "func_call.wat",
+            wat_from_fixture("func_call.wat"),
+            Entry::Auto,
+            &[],
+        ),
     ];
-    for (name, entry, args) in cases {
-        let module = Module::decode(&wat_from_file(name)).expect("decode");
+    for (name, bytes, entry, args) in &cases {
+        let module = Module::decode(bytes).expect("decode");
         let program = lift(&module).expect("lift");
-        let mut host = TestHost::default();
+        let mut host = WasiSnapshotPreview1::new();
         let mut records = Vec::new();
         execute(&module, entry, args, &mut host, &mut records).expect("execute");
         assert!(
             matches!(
-                Trace::build(&program, records),
+                Trace::build(&program, records, args, &[]),
                 Err(TraceError::UnsupportedCall)
             ),
             "{name}: expected UnsupportedCall"
@@ -166,13 +165,13 @@ fn recursive_and_cross_function_calls_are_unsupported() {
 
 #[test]
 fn entryless_module_produces_no_trace() {
-    let module = Module::decode(&wat_from_file("memory.wat")).expect("decode");
+    let module = Module::decode(&wat_from_fixture("memory.wat")).expect("decode");
     let program = lift(&module).expect("lift");
     let mut records = Vec::new();
     execute(&module, &Entry::Auto, &[], &mut NoHost, &mut records).expect("execute");
     assert!(records.is_empty());
     assert!(matches!(
-        Trace::build(&program, records),
+        Trace::build(&program, records, &[], &[]),
         Err(TraceError::EmptyExecution)
     ));
 }
@@ -185,9 +184,6 @@ fn store_then_load_round_trip_through_the_unified_log() {
             (i32.load (i32.const 8))))",
     ));
 
-    // The store and the load touch one linear-memory cell, so the sorted log holds
-    // exactly two entries at address 8: the store of 123, then a load that reads the
-    // same value back---read-consistency the permutation later enforces.
     let at_eight = active_sorted(&trace)
         .into_iter()
         .filter(|&(addr, ..)| addr == Felt::new(8))
@@ -207,9 +203,9 @@ fn store_then_load_round_trip_through_the_unified_log() {
 
 #[test]
 fn padding_rests_on_the_exit_sentinel_with_an_idle_bus() {
-    let module = Module::decode(&wat_from_file("i32_const.wat")).expect("decode");
+    let module = Module::decode(&wat_from_fixture("i32_const.wat")).expect("decode");
     let program = lift(&module).expect("lift");
-    let mut host = TestHost::default();
+    let mut host = WasiSnapshotPreview1::new();
     let mut records = Vec::new();
     execute(&module, &Entry::Auto, &[], &mut host, &mut records).expect("execute");
     let func_index = records[0].func_index;
@@ -220,7 +216,7 @@ fn padding_rests_on_the_exit_sentinel_with_an_idle_bus() {
         .expect("lifted")
         .instrs
         .len();
-    let trace = Trace::build(&program, records).expect("build");
+    let trace = Trace::build(&program, records, &[], &[]).expect("build");
 
     assert!(trace.length().is_power_of_two());
     assert!(
@@ -246,7 +242,7 @@ fn padding_rests_on_the_exit_sentinel_with_an_idle_bus() {
 
 #[test]
 fn a_binary_op_carries_operands_and_result_on_its_own_row() {
-    let module = Module::decode(&wat_from_file("func_add.wat")).expect("decode");
+    let module = Module::decode(&wat_from_fixture("func_add.wat")).expect("decode");
     let program = lift(&module).expect("lift");
     let mut records = Vec::new();
     execute(
@@ -257,7 +253,7 @@ fn a_binary_op_carries_operands_and_result_on_its_own_row() {
         &mut records,
     )
     .expect("execute");
-    let trace = Trace::build(&program, records).expect("build");
+    let trace = Trace::build(&program, records, &[Word::I32(7), Word::I32(5)], &[]).expect("build");
 
     let add_row = trace
         .records()

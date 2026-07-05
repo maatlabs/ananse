@@ -1,0 +1,13 @@
+(module
+  (func (export "if_pick") (param i32) (result i32)
+    (if (result i32) (local.get 0)
+      (then (i32.const 10))
+      (else (i32.const 20))))
+  (func (export "brif_pick") (param i32) (result i32)
+    (block (result i32)
+      (i32.const 30)
+      (local.get 0)
+      (br_if 0)
+      (drop)
+      (i32.const 40)))
+)

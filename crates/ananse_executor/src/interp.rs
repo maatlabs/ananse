@@ -40,16 +40,6 @@ pub struct Execution {
 }
 
 /// Executes a validated module under its static register schedule.
-///
-/// The module is lifted to its register schedule and parsed into an executable
-/// image, then interpreted: every operator's register touches are resolved
-/// against the live operand stack, locals, and globals and emitted as a
-/// [`StepRecord`]. At each program point the operand-stack height execution
-/// reaches is checked against the height the schedule predicts; a disagreement
-/// is reported as [`ExecuteError::ScheduleMismatch`].
-///
-/// The record stream is a deterministic function of the
-/// `(module, entry, args, host)` inputs.
 pub fn execute<O: StepObserver, H: Host>(
     module: &Module,
     entry: &Entry,
@@ -101,7 +91,7 @@ pub fn execute<O: StepObserver, H: Host>(
     })
 }
 
-fn resolve_entry(image: &Image, entry: &Entry) -> Result<Option<u32>> {
+pub(crate) fn resolve_entry(image: &Image, entry: &Entry) -> Result<Option<u32>> {
     match entry {
         Entry::Function(idx) => Ok(Some(*idx)),
         Entry::Export(name) => image
@@ -137,12 +127,8 @@ fn entry_args(image: &Image, func_index: u32, params: u32, args: &[Word]) -> Res
 /// A runtime control frame, tracked only for the data a branch needs: the values
 /// it carries and where it lands.
 struct RtFrame {
-    /// Whether the frame is a `loop` (its branch target is its own header).
     is_loop: bool,
-    /// Values a branch to this label carries: the loop's input arity, or a
-    /// forward block's result arity.
     branch_arity: u32,
-    /// Program point of the frame's matching `end`.
     end_pc: u32,
 }
 
@@ -799,8 +785,6 @@ fn branch_to(
     Ok(Control::Advance(target as usize))
 }
 
-/// Sets the operand stack to `target_height`, preserving the top `arity` values
-/// the branch carries to its label.
 fn unwind_stack(stack: &mut Vec<Word>, target_height: usize, arity: usize) -> Result<()> {
     let keep = target_height
         .checked_sub(arity)
@@ -815,7 +799,6 @@ fn unwind_stack(stack: &mut Vec<Word>, target_height: usize, arity: usize) -> Re
     Ok(())
 }
 
-/// Removes and returns the top `n` operand-stack values, in push order.
 fn take_top(stack: &mut Vec<Word>, n: u32) -> Result<Vec<Word>> {
     let at = stack
         .len()
@@ -824,8 +807,6 @@ fn take_top(stack: &mut Vec<Word>, n: u32) -> Result<Vec<Word>> {
     Ok(stack.split_off(at))
 }
 
-/// Pops runtime control frames whose `end` lies before `next`, reconciling the
-/// frame stack after a structured or forward control transfer.
 fn reconcile(frames: &mut Vec<RtFrame>, next: usize) {
     while frames
         .last()
@@ -876,7 +857,6 @@ fn unop(stack: &mut Vec<Word>, kind: Unary, opcode: OpCode, pc: usize) -> Result
     Ok(Outcome::advance(opcode, pc + 1))
 }
 
-/// The `(byte width, signed, 64-bit result)` shape of a load operator.
 fn load_shape(opcode: OpCode) -> (usize, bool, bool) {
     match opcode {
         OpCode::I32Load => (4, false, false),
@@ -895,8 +875,6 @@ fn load_shape(opcode: OpCode) -> (usize, bool, bool) {
     }
 }
 
-/// Reads `bytes` little-endian bytes already gathered as `raw` into a value of
-/// the target width, sign-extending when the access is signed.
 fn extend(raw: u64, bytes: usize, signed: bool, result64: bool) -> Word {
     let value = if signed && bytes < 8 {
         let shift = 64 - (bytes as u32 * 8);

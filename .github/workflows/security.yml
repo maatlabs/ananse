@@ -28,11 +28,11 @@ jobs:
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    # deny:
-    #     name: Cargo Deny
-    #     runs-on: ubuntu-latest
-    #     steps:
-    #         - uses: actions/checkout@v4
-    #         - uses: EmbarkStudios/cargo-deny-action@v2
-    #           with:
-    #               command: check
+    deny:
+        name: Cargo Deny
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: EmbarkStudios/cargo-deny-action@v2
+              with:
+                  command: check

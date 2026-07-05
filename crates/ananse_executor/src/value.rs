@@ -1,18 +1,11 @@
-use maat_field::Felt;
+use p3_goldilocks::Goldilocks as Felt;
 
 use crate::Trap;
 
 /// A WebAssembly integer value, held as its unsigned bit pattern.
-///
-/// The integer subset Ananse proves has two value types, `i32` and `i64`. A
-/// [`Word`] keeps the runtime width explicit so each operator's operands carry
-/// their own type, which is what lets the executor stay a single code path over
-/// both widths.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Word {
-    /// A 32-bit value, stored as its unsigned bit pattern.
     I32(u32),
-    /// A 64-bit value, stored as its unsigned bit pattern.
     I64(u64),
 }
 
@@ -92,10 +85,6 @@ pub(crate) enum Unary {
 }
 
 /// Applies a binary arithmetic or bitwise operator to two same-width operands.
-///
-/// Division and remainder trap on a zero divisor; signed division traps on the
-/// `MIN / -1` overflow. Shift and rotate counts are reduced modulo the operand
-/// width, matching the WebAssembly specification.
 pub(crate) fn arith(kind: Arith, lhs: Word, rhs: Word) -> Result<Word, Trap> {
     let (x, width) = lhs.raw();
     let (y, _) = rhs.raw();
@@ -180,8 +169,7 @@ pub(crate) fn unary(kind: Unary, operand: Word) -> Word {
     }
 }
 
-/// Re-tags a masked `u64` result as a [`Word`] of the given width. The narrowing
-/// cast keeps the low 32 bits, which is the defined `i32` representation.
+/// Re-tags a masked `u64` result as a [`Word`] of the given width.
 fn retag(value: u64, width: u32) -> Word {
     if width == 32 {
         Word::I32(value as u32)

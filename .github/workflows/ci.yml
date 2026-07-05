@@ -6,6 +6,10 @@ on:
     pull_request:
         branches: [master, main]
 
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
 env:
     RUST_BACKTRACE: 1
     CARGO_TERM_COLOR: always
@@ -86,3 +90,14 @@ jobs:
             - run: cargo doc --all-features --no-deps --document-private-items --workspace
               env:
                   RUSTDOCFLAGS: -D warnings
+
+    msrv:
+        name: MSRV (1.93)
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dtolnay/rust-toolchain@master
+              with:
+                  toolchain: "1.93"
+            - uses: Swatinem/rust-cache@v2
+            - run: cargo check --all-features --all-targets --workspace

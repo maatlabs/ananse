@@ -1,11 +1,11 @@
 use ananse_decoder::Module;
 use ananse_lift::{Register, Successors, lift};
-use ananse_tests::{WAT_FILES, WAT_SNIPPETS, wasm_features, wat_from_file, wat_from_str};
+use ananse_tests::{
+    EXAMPLE_FILES, FIXTURE_FILES, WAT_SNIPPETS, wasm_features, wat_from_example, wat_from_fixture,
+    wat_from_str,
+};
 use wasmparser::{Parser, ValidPayload, Validator};
 
-/// Operand-stack height entering each operator, per defined function, computed by
-/// wasmparser's own validator. This is the independent static ground truth the
-/// lift must reproduce.
 fn validator_heights(bytes: &[u8]) -> Vec<Vec<u32>> {
     let mut validator = Validator::new_with_features(wasm_features());
     let mut per_func = Vec::new();
@@ -58,9 +58,12 @@ fn assert_heights_match(name: &str, bytes: &[u8]) {
 }
 
 #[test]
-fn lift_heights_match_validator_on_fixtures() {
-    for name in WAT_FILES {
-        assert_heights_match(name, &wat_from_file(name));
+fn lift_heights_match_validator_on_programs() {
+    for name in EXAMPLE_FILES {
+        assert_heights_match(name, &wat_from_example(name));
+    }
+    for name in FIXTURE_FILES {
+        assert_heights_match(name, &wat_from_fixture(name));
     }
 }
 
@@ -73,7 +76,7 @@ fn lift_heights_match_validator_on_control_flow() {
 
 #[test]
 fn func_add_register_schedule() {
-    let module = Module::decode(&wat_from_file("func_add.wat")).expect("decodes");
+    let module = Module::decode(&wat_from_fixture("func_add.wat")).expect("decodes");
     let program = lift(&module).expect("lifts");
     assert_eq!(program.functions.len(), 1);
     let f = &program.functions[0];
@@ -97,7 +100,7 @@ fn func_add_register_schedule() {
 
 #[test]
 fn local_set_reads_stack_writes_local() {
-    let module = Module::decode(&wat_from_file("local_set.wat")).expect("decodes");
+    let module = Module::decode(&wat_from_fixture("local_set.wat")).expect("decodes");
     let program = lift(&module).expect("lifts");
     let f = &program.functions[0];
     assert_eq!(f.locals_count, 1, "no params, one declared local");
@@ -111,7 +114,7 @@ fn local_set_reads_stack_writes_local() {
 #[test]
 fn imported_function_shifts_defined_index() {
     // fd_write is imported (function index 0), so the defined function is index 1.
-    let module = Module::decode(&wat_from_file("hello_world.wat")).expect("decodes");
+    let module = Module::decode(&wat_from_fixture("hello_world.wat")).expect("decodes");
     let program = lift(&module).expect("lifts");
     assert_eq!(program.functions.len(), 1);
     assert_eq!(program.functions[0].func_index, 1);
@@ -124,7 +127,7 @@ fn imported_function_shifts_defined_index() {
 #[test]
 fn call_resolves_callee_arity() {
     // call_doubler calls $double (params 1, results 1).
-    let module = Module::decode(&wat_from_file("func_call.wat")).expect("decodes");
+    let module = Module::decode(&wat_from_fixture("func_call.wat")).expect("decodes");
     let program = lift(&module).expect("lifts");
     assert_eq!(program.functions.len(), 2);
     assert_eq!(program.functions[0].func_index, 0);
@@ -138,7 +141,7 @@ fn call_resolves_callee_arity() {
 
 #[test]
 fn fibonacci_if_branches_around_then_arm() {
-    let module = Module::decode(&wat_from_file("fibonacci.wat")).expect("decodes");
+    let module = Module::decode(&wat_from_example("fibonacci.wat")).expect("decodes");
     let program = lift(&module).expect("lifts");
     let f = &program.functions[0];
     // local.get, i32.const, i32.lt_s, if(pc3), i32.const, return(pc5), end(pc6), ...
