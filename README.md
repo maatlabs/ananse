@@ -41,7 +41,7 @@ The current version is `0.2.0`. It executes any program in the integer subset of
 
 ### Prerequisites
 
-- [Rust](https://www.rust-lang.org/tools/install) 1.89 or later (with `rustup`)---the minimum supported Rust version, declared as `rust-version` in the workspace manifest
+- [Rust](https://www.rust-lang.org/tools/install) 1.93 or later (with `rustup`)---the minimum supported Rust version, declared as `rust-version` in the workspace manifest
 - Cargo (comes with Rust)
 
 ### Installation
