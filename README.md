@@ -119,6 +119,10 @@ Licensed under either of [Apache License, Version 2.0](./LICENSE-APACHE) or [MIT
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this codebase by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
 
+## Security
+
+All crates enforce `#![forbid(unsafe_code)]`. The zkVM has been hardened against adversarial input with resource limits, checked arithmetic, and safe type conversions. Field element arithmetic relies on Plonky3's sound implementations. See [`SECURITY.md`](./SECURITY.md) for the full threat model.
+
 ## Acknowledgments
 
 Ananse's original v0.1.0 runtime was inspired by Hiroki Sakamoto's [Writing a WASM Runtime in Rust](https://skanehira.github.io/writing-a-wasm-runtime-in-rust/) and the accompanying [tiny-wasm-runtime](https://github.com/skanehira/tiny-wasm-runtime) repository. That code has since been fully replaced by the register-shaped ZK architecture described above.
