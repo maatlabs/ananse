@@ -21,11 +21,21 @@
 
 ## Overview
 
-_Ananse_ (the Akan/Twi word for spider) is a WebAssembly-native virtual machine whose execution can be proved under a zero-knowledge STARK. Any program that compiles to the integer subset of WASM---written in Rust, C, C++, AssemblyScript, or any other language with a WASM target---runs on Ananse and produces a cryptographic proof that a third party can verify without re-executing the program.
+_Ananse_ (the Akan/Twi word for _spider_) is a WebAssembly-native virtual machine designed so that its execution can be proved under a zero-knowledge STARK. It is built to prove WebAssembly bytecode _directly_: the verifier is convinced the actual module ran, with no compiler in the trusted base. Any program that compiles to the integer subset of WASM---written in Rust, C, C++, AssemblyScript, or any other language with a WASM target---runs on Ananse.
+
+The proof shape is the distinguishing choice. Ananse lifts WebAssembly's operand stack, locals, globals, and linear memory into one flat, statically-addressed register space and reasons about it with a register-shaped AIR over the Goldilocks field, so it keeps WASM as the directly-proven guest without paying a stack machine's separate permutation argument for each memory bank. The proof system is a FRI-based STARK (transparent, no trusted setup, post-quantum secure).
+
+This release is the executable virtual machine: a module decodes, lifts to the static register form, and runs to its result and output journal, end to end, through a deterministic minimal WASI. The register-shaped AIR that a run is proved against is built and constraint-checked in the tree; the FRI prover that turns a run into a verifiable receipt lands in the next release.
 
 ## Status
 
-Ananse is currently at version `0.1.1`. The current code is the v0.1.0 minimal WASM runtime preserved verbatim under `crates/ananse/`; it executes a curated set of integer-only WAT fixtures (the most complex of which is `fibonacci.wat`) but produces no proofs. The foundational ZK release is **v0.2.0**, in active development.
+The current version is `0.2.0`. It executes any program in the integer subset of WebAssembly-MVP through the full `decode -> lift -> execute -> journal` pipeline and exposes it behind the `ananse run` command and a library `Runtime`. It does not yet produce proofs: the FRI STARK prover and the `prove` / `verify` flow are the focus of the next release.
+
+| Release    | Focus                                                                                                                       | Status      |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| **v0.1.x** | Minimal WASM runtime + workspace bootstrap                                                                                  | Complete    |
+| **v0.2.0** | Executable VM: decode -> lift -> execute -> journal over the integer subset, CLI, register-AIR built and constraint-checked | **Current** |
+| **v0.3.0** | FRI STARK prover and `prove` / `verify` CLI subcommands                                                                     | Planned     |
 
 ## Getting Started
 
@@ -36,7 +46,13 @@ Ananse is currently at version `0.1.1`. The current code is the v0.1.0 minimal W
 
 ### Installation
 
-Build from source:
+Install the latest release directly from [crates.io](https://crates.io/crates/ananse):
+
+```bash
+cargo install ananse
+```
+
+Or build from source:
 
 ```bash
 git clone https://github.com/maatlabs/ananse.git
@@ -44,15 +60,24 @@ cd ananse
 cargo build --release
 ```
 
-The `ananse` binary is produced at `target/release/ananse`. v0.2.0 will publish to `crates.io` for a `cargo install`.
+> **Note (source builds):** When running from a source build instead of `cargo install`, substitute `cargo run --release --` for `ananse` in all commands below (e.g., `cargo run --release -- run examples/fibonacci.wat 10`).
 
-### Running the Example
+### Running a Program
 
-The current binary executes the bundled `hello_world.wasm` fixture under the v0.1.0 runtime:
+`ananse run` decodes, lifts, and executes a `.wasm` or `.wat` module, printing its result (and any WASI journal):
 
 ```bash
-cargo run --release
+# Recursive Fibonacci: the auto-selected export runs with one argument.
+ananse run examples/fibonacci.wat 10                 # -> 89
+
+# A named export with two arguments.
+ananse run examples/gcd.wat --invoke gcd 1071 462    # -> 21
+
+# CRC-32 over the "123456789" check vector bundled in the module.
+ananse run examples/crc32.wat --invoke crc32 0 9     # -> 3421780262
 ```
+
+The [`examples/`](./examples) directory collects curated, ZK-themed integer programs (a Fibonacci recurrence, a factorial and GCD, an FNV-1a hash round, modular exponentiation, a CRC-32 checksum, and a Merkle-path fold).
 
 ### Development
 
@@ -66,24 +91,23 @@ cargo test --all-features --all-targets --workspace
 
 ## Architecture
 
-The current `crates/ananse/` package contains the v0.1.0 runtime: a `nom`-based WASM binary decoder under `src/binary/`, a tree-walking interpreter under `src/execution/`, and a minimal `fd_write` WASI shim. The decoder and interpreter together cover enough of WASM to execute the integer fixtures shipped under `crates/ananse/fixtures/` (including `fibonacci.wat`) but produce no proofs.
-
-The foundational ZK release replaces this implementation crate-by-crate. The target workspace shape is:
+The zkVM is a workspace of focused crates, each with its own README. A module flows left to right: decoded and validated, lifted to the static register schedule, executed to a record stream, and materialized into the trace the register-shaped AIR constrains.
 
 ```text
 ananse/
 ├── crates/
-│   ├── ananse/              # binary + thin glue; depends on every workspace crate
-│   ├── ananse_decoder/      # wasmparser-backed module validator + WASM rejection rules
-│   ├── ananse_lift/         # static stack-to-register lift; depth-indexed register schedule
-│   ├── ananse_executor/     # schedule-driven interpreter + StepObserver
-│   ├── ananse_trace/        # WASM-trace builder + access-log preprocessing
-│   ├── ananse_air/          # winter-air::Air for the WASM integer subset
-│   ├── ananse_prover/       # winter-prover wrapper + Receipt type
-│   └── ananse_wasi/         # minimal deterministic wasi_snapshot_preview1
-├── fixtures/                # WAT/WASM fixture pool, consumed by the tests crate
-└── tests/                   # `ananse_tests` workspace member: shared helpers + integration tests
+│   ├── ananse/              # CLI + umbrella library (Runtime facade, prelude)
+│   ├── ananse_decoder/      # wasmparser-backed validator + integer-subset rejection rules
+│   ├── ananse_lift/         # static stack-to-register lift: per-program-point register schedule
+│   ├── ananse_executor/     # schedule-driven interpreter + step records
+│   ├── ananse_trace/        # unified value-bus + address-sorted access-log trace
+│   ├── ananse_air/          # register-shaped AIR (p3-air) for the WASM integer subset
+│   └── ananse_wasi/         # deterministic minimal wasi_snapshot_preview1
+├── examples/                # ZK-themed integer WASM programs
+└── tests/                   # `ananse_tests` workspace member: shared helpers, fixtures, integration tests
 ```
+
+`ananse_lift` is the architectural centerpiece: the static analysis that turns WASM's stack typing into the register schedule every downstream crate consumes, and what makes a register-shaped proof of WebAssembly possible without compiling WASM away. The FRI STARK prover that produces and checks receipts against `ananse_air` lands in the next release. The proving path is built on [Plonky3](https://github.com/Plonky3/Plonky3) (`p3-goldilocks`, `p3-air`, `p3-fri`).
 
 ## Contributing
 
@@ -95,15 +119,6 @@ Licensed under either of [Apache License, Version 2.0](./LICENSE-APACHE) or [MIT
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this codebase by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
 
-## Roadmap
-
-| Milestone  | Focus                                                                                       | Status          |
-| ---------- | ------------------------------------------------------------------------------------------- | --------------- |
-| **v0.1.x** | Minimal WASM runtime + workspace bootstrap                                                  | **Complete**    |
-| **v0.2.0** | Foundational ZK release: decode -> execute -> trace -> prove -> verify, integer WASM subset | **In Progress** |
-| **v0.3.0** | Per-opcode-class AIR chips with `logup`, segmented continuations                            | Planned         |
-| **v0.4.0** | Recursion, precompile chips (Keccak, SHA-256, Poseidon, Ed25519, secp256k1)                 | Planned         |
-
 ## Acknowledgments
 
-Ananse's v0.1.0 implementation was based on Hiroki Sakamoto's [Writing a WASM Runtime in Rust](https://skanehira.github.io/writing-a-wasm-runtime-in-rust/) and the accompanying [tiny-wasm-runtime](https://github.com/skanehira/tiny-wasm-runtime) repository. That code is preserved under `crates/ananse/src/{binary,execution}/` for v0.1.x and is replaced by the foundational ZK pipeline at v0.2.0.
+Ananse's original v0.1.0 runtime was inspired by Hiroki Sakamoto's [Writing a WASM Runtime in Rust](https://skanehira.github.io/writing-a-wasm-runtime-in-rust/) and the accompanying [tiny-wasm-runtime](https://github.com/skanehira/tiny-wasm-runtime) repository. That code has since been fully replaced by the register-shaped ZK architecture described above.

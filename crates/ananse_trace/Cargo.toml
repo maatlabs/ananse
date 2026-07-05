@@ -9,7 +9,7 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
-readme = "../../README.md"
+readme = "README.md"
 
 [dependencies]
 ananse_lift = { workspace = true }

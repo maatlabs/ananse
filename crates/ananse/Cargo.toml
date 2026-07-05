@@ -1,6 +1,6 @@
 [package]
 name = "ananse"
-description = "Ananse: A WebAssembly-native zero-knowledge virtual machine (zkVM)"
+description = "Ananse: a WebAssembly-native zero-knowledge virtual machine (zkVM)"
 keywords = ["wasm", "zero-knowledge", "zk", "zkvm", "stark"]
 categories = ["compilers", "cryptography", "wasm"]
 version.workspace = true
@@ -9,7 +9,7 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
-readme = "../../README.md"
+readme = "README.md"
 
 [lib]
 name = "ananse"

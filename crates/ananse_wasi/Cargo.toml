@@ -1,6 +1,6 @@
 [package]
 name = "ananse_wasi"
-description = "Deterministic minimal WASI host for the Ananse zkVM"
+description = "Deterministic minimal WASI (WebAssembly System Interface) host for the Ananse zkVM"
 keywords = ["wasm", "zero-knowledge", "zk", "zkvm", "wasi"]
 categories = ["compilers", "cryptography", "wasm"]
 version.workspace = true
@@ -9,7 +9,7 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
-readme = "../../README.md"
+readme = "README.md"
 
 [dependencies]
 ananse_decoder = { workspace = true }
