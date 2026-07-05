@@ -4,10 +4,39 @@ use wasmparser::{
     Payload, TypeRef, ValType,
 };
 
-use crate::{ExecuteError, OpCode, Result, Word, error as exec_error};
+use crate::{Entry, ExecuteError, OpCode, Result, Word, error as exec_error};
 
 /// Bytes per WebAssembly memory page.
 pub(crate) const PAGE_SIZE: usize = 65536;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WordType {
+    I32,
+    I64,
+}
+
+pub fn entry_parameters(module: &Module, entry: &Entry) -> Result<Vec<WordType>> {
+    let image = Image::parse(module.bytes())?;
+    let Some(func_index) = crate::interp::resolve_entry(&image, entry)? else {
+        return Ok(Vec::new());
+    };
+    let type_idx = *image
+        .func_types
+        .get(func_index as usize)
+        .ok_or(ExecuteError::UndefinedEntry)?;
+    let ty = image
+        .types
+        .get(type_idx as usize)
+        .ok_or(ExecuteError::UndefinedEntry)?;
+    Ok(ty
+        .params
+        .iter()
+        .map(|&param| match param {
+            ValTy::I32 => WordType::I32,
+            ValTy::I64 => WordType::I64,
+        })
+        .collect())
+}
 
 pub fn function_opcodes(module: &Module, func_index: u32) -> Result<Vec<OpCode>> {
     let image = Image::parse(module.bytes())?;

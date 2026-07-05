@@ -91,7 +91,7 @@ pub fn execute<O: StepObserver, H: Host>(
     })
 }
 
-fn resolve_entry(image: &Image, entry: &Entry) -> Result<Option<u32>> {
+pub(crate) fn resolve_entry(image: &Image, entry: &Entry) -> Result<Option<u32>> {
     match entry {
         Entry::Function(idx) => Ok(Some(*idx)),
         Entry::Export(name) => image

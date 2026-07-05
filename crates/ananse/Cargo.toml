@@ -11,17 +11,22 @@ repository.workspace = true
 homepage.workspace = true
 readme = "../../README.md"
 
+[lib]
+name = "ananse"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ananse"
 path = "src/main.rs"
 
 [dependencies]
-anyhow.workspace = true
-nom.workspace = true
-nom-leb128.workspace = true
-num-derive.workspace = true
-num-traits.workspace = true
+ananse_decoder = { workspace = true }
+ananse_lift = { workspace = true }
+ananse_executor = { workspace = true }
+ananse_trace = { workspace = true }
+ananse_air = { workspace = true }
+ananse_wasi = { workspace = true }
 
-[dev-dependencies]
-pretty_assertions.workspace = true
+clap = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
 wat.workspace = true
