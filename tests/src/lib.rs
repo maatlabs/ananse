@@ -20,14 +20,30 @@ use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_matrix::stack::ViewPair;
 use wasmparser::WasmFeatures;
 
-pub const WAT_FILES: &[&str] = &[
+/// The curated showcase programs under `examples/` --- production-grade,
+/// ZK-themed integer workloads exercised end to end by the executor suite.
+pub const EXAMPLE_FILES: &[&str] = &[
+    "fibonacci.wat",
+    "factorial.wat",
+    "gcd.wat",
+    "fnv1a.wat",
+    "modpow.wat",
+    "crc32.wat",
+    "merkle_path.wat",
+];
+
+pub const EXAMPLES_DIR: &str = "../examples";
+
+/// The opcode-family test fixtures under `tests/fixtures/` --- small programs
+/// each named for the operator family it exercises, consumed by the decoder,
+/// lift, executor, trace, and AIR suites.
+pub const FIXTURE_FILES: &[&str] = &[
     "bitwise.wat",
     "branch.wat",
     "cmp.wat",
     "const.wat",
     "conv.wat",
     "ext_s.wat",
-    "fibonacci.wat",
     "func_add.wat",
     "func_call.wat",
     "func_local.wat",
@@ -42,6 +58,26 @@ pub const WAT_FILES: &[&str] = &[
     "memory.wat",
     "select.wat",
 ];
+
+pub const SINGLE_FRAME_FIXTURES: &[&str] = &[
+    "i32_const.wat",
+    "func_add.wat",
+    "func_sub.wat",
+    "func_lts.wat",
+    "func_local.wat",
+    "local_set.wat",
+    "local_tee.wat",
+    "global.wat",
+    "conv.wat",
+    "cmp.wat",
+    "ext_s.wat",
+    "bitwise.wat",
+    "select.wat",
+    "branch.wat",
+    "i32_store.wat",
+];
+
+pub const FIXTURE_DIR: &str = "fixtures";
 
 pub const WAT_SNIPPETS: &[(&str, &str)] = &[
     (
@@ -78,26 +114,6 @@ pub const WAT_SNIPPETS: &[(&str, &str)] = &[
         "unreachable_op",
         "(module (func (result i32) (unreachable)))",
     ),
-];
-
-pub const FIXTURES_DIR: &str = "../fixtures";
-
-pub const SINGLE_FRAME_FIXTURES: &[&str] = &[
-    "i32_const.wat",
-    "func_add.wat",
-    "func_sub.wat",
-    "func_lts.wat",
-    "func_local.wat",
-    "local_set.wat",
-    "local_tee.wat",
-    "global.wat",
-    "conv.wat",
-    "cmp.wat",
-    "ext_s.wat",
-    "bitwise.wat",
-    "select.wat",
-    "branch.wat",
-    "i32_store.wat",
 ];
 
 pub fn trace_of(bytes: &[u8]) -> Trace {
@@ -142,27 +158,6 @@ pub fn trace_and_rom_entry(
     (trace, rom, data)
 }
 
-pub fn wasm_features() -> WasmFeatures {
-    let mut f = WasmFeatures::empty();
-    f.insert(WasmFeatures::MUTABLE_GLOBAL);
-    f
-}
-
-pub fn fixture_path(name: &str) -> PathBuf {
-    Path::new(FIXTURES_DIR).join(name)
-}
-
-pub fn wat_from_file(name: &str) -> Vec<u8> {
-    let path = fixture_path(name);
-    let wat =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    wat::parse_str(&wat).unwrap_or_else(|e| panic!("assemble {}: {e}", path.display()))
-}
-
-pub fn wat_from_str(wat: &str) -> Vec<u8> {
-    wat::parse_str(wat).expect("WAT assembles to WASM")
-}
-
 pub fn air_for(trace: &Trace, rom: &[Felt], data: &[(u32, u32, u32)]) -> AnanseAir {
     AnanseAir::new(
         rom,
@@ -171,31 +166,6 @@ pub fn air_for(trace: &Trace, rom: &[Felt], data: &[(u32, u32, u32)]) -> AnanseA
         trace.stack_base(),
         trace.initial_state(),
     )
-}
-
-/// Fixed stand-ins for the Fiat--Shamir permutation challenges the prover draws,
-/// letting the control-flow lookup, consistency permutation, range-check byte-table
-/// lookup, boundary lookup, bitwise AND-table lookup, popcount lookup, and pc-keyed
-/// data-ROM lookup be exercised without a prover, in [`NUM_CHALLENGES`] order: the
-/// control-flow folding challenge, the consistency permutation's denominator and
-/// access-folding challenges, the byte-table challenge, the boundary lookup's
-/// denominator, the AND-table's tuple-fold and denominator challenges, the popcount
-/// table's pair-fold and denominator challenges, and the data-ROM's tuple-fold and
-/// denominator challenges.
-pub fn mock_challenges() -> [QuadExt; NUM_CHALLENGES] {
-    [
-        QuadExt::from(Felt::new(0x9e37_79b9_7f4a_7c15)),
-        QuadExt::from(Felt::new(0xff51_afd7_ed55_8ccd)),
-        QuadExt::from(Felt::new(0xc4ce_b9fe_1a85_ec53)),
-        QuadExt::from(Felt::new(0xbf58_476d_1ce4_e5b9)),
-        QuadExt::from(Felt::new(0x94d0_49bb_1331_11eb)),
-        QuadExt::from(Felt::new(0x2545_f491_4f6c_dd1d)),
-        QuadExt::from(Felt::new(0x1656_67b1_9e37_79f9)),
-        QuadExt::from(Felt::new(0x6a09_e667_f3bc_c908)),
-        QuadExt::from(Felt::new(0xb056_88c2_b3e6_c1f7)),
-        QuadExt::from(Felt::new(0x3c6e_f372_fe94_f82b)),
-        QuadExt::from(Felt::new(0xa54f_f53a_5f1d_36f1)),
-    ]
 }
 
 pub fn main_matrix(columns: &[Vec<Felt>], length: usize) -> RowMajorMatrix<Felt> {
@@ -265,4 +235,63 @@ pub fn failing_rows(
             builder.has_failures()
         })
         .collect()
+}
+
+pub fn wasm_features() -> WasmFeatures {
+    let mut f = WasmFeatures::empty();
+    f.insert(WasmFeatures::MUTABLE_GLOBAL);
+    f
+}
+
+pub fn example_path(name: &str) -> PathBuf {
+    Path::new(EXAMPLES_DIR).join(name)
+}
+
+pub fn fixture_path(name: &str) -> PathBuf {
+    Path::new(FIXTURE_DIR).join(name)
+}
+
+fn wat_from_path(path: &Path) -> Vec<u8> {
+    let wat =
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    wat::parse_str(&wat).unwrap_or_else(|e| panic!("assemble {}: {e}", path.display()))
+}
+
+/// Loads and assembles a showcase program from `examples/`.
+pub fn wat_from_example(name: &str) -> Vec<u8> {
+    wat_from_path(&example_path(name))
+}
+
+/// Loads and assembles a test fixture from `tests/fixtures/`.
+pub fn wat_from_fixture(name: &str) -> Vec<u8> {
+    wat_from_path(&fixture_path(name))
+}
+
+pub fn wat_from_str(wat: &str) -> Vec<u8> {
+    wat::parse_str(wat).expect("WAT assembles to WASM")
+}
+
+/// Fixed stand-ins for the Fiat--Shamir permutation challenges the prover draws,
+/// letting the control-flow lookup, consistency permutation, range-check byte-table
+/// lookup, boundary lookup, bitwise AND-table lookup, popcount lookup, and pc-keyed
+/// data-ROM lookup be exercised without a prover, in [`NUM_CHALLENGES`] order: the
+/// control-flow folding challenge, the consistency permutation's denominator and
+/// access-folding challenges, the byte-table challenge, the boundary lookup's
+/// denominator, the AND-table's tuple-fold and denominator challenges, the popcount
+/// table's pair-fold and denominator challenges, and the data-ROM's tuple-fold and
+/// denominator challenges.
+pub fn mock_challenges() -> [QuadExt; NUM_CHALLENGES] {
+    [
+        QuadExt::from(Felt::new(0x9e37_79b9_7f4a_7c15)),
+        QuadExt::from(Felt::new(0xff51_afd7_ed55_8ccd)),
+        QuadExt::from(Felt::new(0xc4ce_b9fe_1a85_ec53)),
+        QuadExt::from(Felt::new(0xbf58_476d_1ce4_e5b9)),
+        QuadExt::from(Felt::new(0x94d0_49bb_1331_11eb)),
+        QuadExt::from(Felt::new(0x2545_f491_4f6c_dd1d)),
+        QuadExt::from(Felt::new(0x1656_67b1_9e37_79f9)),
+        QuadExt::from(Felt::new(0x6a09_e667_f3bc_c908)),
+        QuadExt::from(Felt::new(0xb056_88c2_b3e6_c1f7)),
+        QuadExt::from(Felt::new(0x3c6e_f372_fe94_f82b)),
+        QuadExt::from(Felt::new(0xa54f_f53a_5f1d_36f1)),
+    ]
 }

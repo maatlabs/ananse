@@ -1,12 +1,12 @@
 //! End-to-end coverage of the `Runtime` facade and the `ananse run` binary over
-//! the same fixtures, from the crate root working directory.
+//! the same programs, from the crate root working directory.
 
 use std::process::Command;
 
 use ananse::prelude::*;
 
-const FIBONACCI: &str = "../../fixtures/fibonacci.wat";
-const HELLO_WORLD: &str = "../../fixtures/hello_world.wat";
+const FIBONACCI: &str = "../../examples/fibonacci.wat";
+const HELLO_WORLD: &str = "../../tests/fixtures/hello_world.wat";
 
 fn assemble(path: &str) -> Vec<u8> {
     wat::parse_file(path).unwrap_or_else(|e| panic!("assemble {path}: {e}"))

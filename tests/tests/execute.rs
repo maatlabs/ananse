@@ -4,7 +4,7 @@ use ananse_executor::{
     function_opcodes,
 };
 use ananse_lift::{Register, lift};
-use ananse_tests::{WAT_FILES, WAT_SNIPPETS, wat_from_file, wat_from_str};
+use ananse_tests::{FIXTURE_FILES, WAT_SNIPPETS, wat_from_example, wat_from_fixture, wat_from_str};
 use ananse_wasi::WasiSnapshotPreview1;
 use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks as Felt;
@@ -70,8 +70,8 @@ fn assert_static_opcodes_match_records(name: &str, bytes: &[u8], checked: &mut u
 
 #[test]
 fn execution_is_deterministic() {
-    for name in WAT_FILES {
-        let bytes = wat_from_file(name);
+    for name in FIXTURE_FILES {
+        let bytes = wat_from_fixture(name);
         assert_eq!(records(&bytes), records(&bytes), "{name}");
     }
     for (name, bytes) in completing_snippets() {
@@ -82,8 +82,8 @@ fn execution_is_deterministic() {
 #[test]
 fn records_agree_with_lift_schedule() {
     let mut checked = 0usize;
-    for name in WAT_FILES {
-        let bytes = wat_from_file(name);
+    for name in FIXTURE_FILES {
+        let bytes = wat_from_fixture(name);
         let module = Module::decode(&bytes).expect("decode");
         let program = lift(&module).expect("lift");
         for record in records(&bytes) {
@@ -114,8 +114,8 @@ fn records_agree_with_lift_schedule() {
 #[test]
 fn function_opcodes_agree_with_executed_records() {
     let mut checked = 0usize;
-    for name in WAT_FILES {
-        assert_static_opcodes_match_records(name, &wat_from_file(name), &mut checked);
+    for name in FIXTURE_FILES {
+        assert_static_opcodes_match_records(name, &wat_from_fixture(name), &mut checked);
     }
     for (name, bytes) in completing_snippets() {
         assert_static_opcodes_match_records(name, &bytes, &mut checked);
@@ -127,7 +127,7 @@ fn function_opcodes_agree_with_executed_records() {
 fn arithmetic_and_calls_compute_expected_values() {
     assert_eq!(
         run_export(
-            &wat_from_file("func_add.wat"),
+            &wat_from_fixture("func_add.wat"),
             "add",
             &[Word::I32(3), Word::I32(4)]
         ),
@@ -135,7 +135,7 @@ fn arithmetic_and_calls_compute_expected_values() {
     );
     assert_eq!(
         run_export(
-            &wat_from_file("func_sub.wat"),
+            &wat_from_fixture("func_sub.wat"),
             "sub",
             &[Word::I32(7), Word::I32(3)]
         ),
@@ -143,7 +143,7 @@ fn arithmetic_and_calls_compute_expected_values() {
     );
     assert_eq!(
         run_export(
-            &wat_from_file("func_lts.wat"),
+            &wat_from_fixture("func_lts.wat"),
             "lts",
             &[Word::I32(2), Word::I32(5)]
         ),
@@ -151,7 +151,7 @@ fn arithmetic_and_calls_compute_expected_values() {
     );
     assert_eq!(
         run_export(
-            &wat_from_file("func_lts.wat"),
+            &wat_from_fixture("func_lts.wat"),
             "lts",
             &[Word::I32(5), Word::I32(2)]
         ),
@@ -160,24 +160,80 @@ fn arithmetic_and_calls_compute_expected_values() {
     // call_doubler(21) calls $double, which returns 21 + 21.
     assert_eq!(
         run_export(
-            &wat_from_file("func_call.wat"),
+            &wat_from_fixture("func_call.wat"),
             "call_doubler",
             &[Word::I32(21)]
         ),
         vec![Word::I32(42)]
     );
-    // Recursive fib: fib(10) = 89 under the fixture's `n < 2 => 1` base case.
     assert_eq!(
-        run_export(&wat_from_file("fibonacci.wat"), "fib", &[Word::I32(10)]),
+        run_export(&wat_from_fixture("i32_const.wat"), "i32_const", &[]),
+        vec![Word::I32(42)]
+    );
+    assert_eq!(
+        run_export(&wat_from_fixture("local_set.wat"), "local_set", &[]),
+        vec![Word::I32(42)]
+    );
+}
+
+#[test]
+fn examples_compute_expected_values() {
+    // Each showcase program under `examples/` runs end to end to a result checked
+    // against an independent reference.
+    assert_eq!(
+        run_export(&wat_from_example("fibonacci.wat"), "fib", &[Word::I32(10)]),
         vec![Word::I32(89)]
     );
     assert_eq!(
-        run_export(&wat_from_file("i32_const.wat"), "i32_const", &[]),
-        vec![Word::I32(42)]
+        run_export(
+            &wat_from_example("factorial.wat"),
+            "factorial",
+            &[Word::I64(10)]
+        ),
+        vec![Word::I64(3_628_800)]
     );
     assert_eq!(
-        run_export(&wat_from_file("local_set.wat"), "local_set", &[]),
-        vec![Word::I32(42)]
+        run_export(
+            &wat_from_example("gcd.wat"),
+            "gcd",
+            &[Word::I64(1071), Word::I64(462)]
+        ),
+        vec![Word::I64(21)]
+    );
+    // FNV-1a over the six bytes of "Ananse".
+    assert_eq!(
+        run_export(
+            &wat_from_example("fnv1a.wat"),
+            "fnv1a",
+            &[Word::I32(0), Word::I32(6)]
+        ),
+        vec![Word::I64(8_582_844_739_662_639_449)]
+    );
+    // 4^13 mod 497, a standard RSA worked example.
+    assert_eq!(
+        run_export(
+            &wat_from_example("modpow.wat"),
+            "modpow",
+            &[Word::I64(4), Word::I64(13), Word::I64(497)]
+        ),
+        vec![Word::I64(445)]
+    );
+    // CRC-32/ISO-HDLC check value over "123456789".
+    assert_eq!(
+        run_export(
+            &wat_from_example("crc32.wat"),
+            "crc32",
+            &[Word::I32(0), Word::I32(9)]
+        ),
+        vec![Word::I32(0xCBF4_3926)]
+    );
+    assert_eq!(
+        run_export(
+            &wat_from_example("merkle_path.wat"),
+            "merkle_root",
+            &[Word::I64(1), Word::I32(0), Word::I32(3)]
+        ),
+        vec![Word::I64(3_251_291_996_388_540_232)]
     );
 }
 
@@ -274,7 +330,7 @@ fn field_encoding_splits_values_into_faithful_limbs() {
 
 #[test]
 fn store_emits_a_memory_access() {
-    let store = records(&wat_from_file("i32_store.wat"))
+    let store = records(&wat_from_fixture("i32_store.wat"))
         .into_iter()
         .find(|r| r.opcode == OpCode::I32Store)
         .expect("store executed");
@@ -291,7 +347,7 @@ fn store_emits_a_memory_access() {
 
 #[test]
 fn hello_world_writes_its_journal() {
-    let module = Module::decode(&wat_from_file("hello_world.wat")).expect("decode");
+    let module = Module::decode(&wat_from_fixture("hello_world.wat")).expect("decode");
     let mut host = WasiSnapshotPreview1::new();
     let execution = execute(&module, &Entry::Auto, &[], &mut host, &mut ()).expect("execute");
     assert_eq!(host.journal(), b"Hello, World!\n");
@@ -312,7 +368,7 @@ fn proc_exit_halts_with_status() {
 
 #[test]
 fn module_without_entry_runs_nothing() {
-    let module = Module::decode(&wat_from_file("memory.wat")).expect("decode");
+    let module = Module::decode(&wat_from_fixture("memory.wat")).expect("decode");
     let mut stream: Vec<StepRecord> = Vec::new();
     let execution = execute(&module, &Entry::Auto, &[], &mut NoHost, &mut stream).expect("execute");
     assert_eq!(execution.steps, 0);

@@ -4,7 +4,7 @@ use ananse_executor::{Entry, OpCode, Transition, Word, execute, function_opcodes
 use ananse_lift::{Register, lift};
 use ananse_tests::{
     SINGLE_FRAME_FIXTURES, air_for, failing_rows, main_matrix, mock_challenges, permutation_of,
-    trace_and_rom, trace_and_rom_entry, wat_from_file,
+    trace_and_rom, trace_and_rom_entry, wat_from_fixture,
 };
 use ananse_trace::Trace;
 use ananse_trace::layout::{
@@ -31,8 +31,11 @@ fn assert_binary_relation(
     tamper_hi: bool,
 ) {
     let challenges = mock_challenges();
-    let (trace, rom, data) =
-        trace_and_rom_entry(&wat_from_file(fixture), &Entry::Export(export.into()), args);
+    let (trace, rom, data) = trace_and_rom_entry(
+        &wat_from_fixture(fixture),
+        &Entry::Export(export.into()),
+        args,
+    );
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -67,8 +70,11 @@ fn assert_move_relation(
     tamper_hi: bool,
 ) {
     let challenges = mock_challenges();
-    let (trace, rom, data) =
-        trace_and_rom_entry(&wat_from_file(fixture), &Entry::Export(export.into()), args);
+    let (trace, rom, data) = trace_and_rom_entry(
+        &wat_from_fixture(fixture),
+        &Entry::Export(export.into()),
+        args,
+    );
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -98,7 +104,7 @@ fn assert_move_relation(
 fn assert_select_relation(export: &str, args: &[Word], tamper_hi: bool) {
     let challenges = mock_challenges();
     let (trace, rom, data) = trace_and_rom_entry(
-        &wat_from_file("select.wat"),
+        &wat_from_fixture("select.wat"),
         &Entry::Export(export.into()),
         args,
     );
@@ -167,7 +173,7 @@ fn first_write_row(trace: &Trace) -> Option<usize> {
 fn every_single_frame_trace_satisfies_the_constraints() {
     let challenges = mock_challenges();
     for name in SINGLE_FRAME_FIXTURES {
-        let (trace, rom, data) = trace_and_rom(&wat_from_file(name));
+        let (trace, rom, data) = trace_and_rom(&wat_from_fixture(name));
         let air = air_for(&trace, &rom, &data);
         let main = main_matrix(trace.columns(), trace.length());
         let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -179,7 +185,7 @@ fn every_single_frame_trace_satisfies_the_constraints() {
 #[test]
 fn adding_a_second_hot_selector_breaks_one_hotness() {
     let challenges = mock_challenges();
-    let (trace, rom, data) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let (trace, rom, data) = trace_and_rom(&wat_from_fixture("func_add.wat"));
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -200,7 +206,7 @@ fn adding_a_second_hot_selector_breaks_one_hotness() {
 #[test]
 fn stalling_the_clock_breaks_the_increment() {
     let challenges = mock_challenges();
-    let (trace, rom, data) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let (trace, rom, data) = trace_and_rom(&wat_from_fixture("func_add.wat"));
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -221,7 +227,7 @@ fn stalling_the_clock_breaks_the_increment() {
 #[test]
 fn clearing_padding_in_the_halt_suffix_breaks_absorption() {
     let challenges = mock_challenges();
-    let (trace, rom, data) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let (trace, rom, data) = trace_and_rom(&wat_from_fixture("func_add.wat"));
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -245,7 +251,7 @@ fn clearing_padding_in_the_halt_suffix_breaks_absorption() {
 #[test]
 fn forging_an_opcode_breaks_the_control_flow_lookup() {
     let challenges = mock_challenges();
-    let (trace, rom, data) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let (trace, rom, data) = trace_and_rom(&wat_from_fixture("func_add.wat"));
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -272,7 +278,7 @@ fn forging_an_opcode_breaks_the_control_flow_lookup() {
 #[test]
 fn forging_a_height_breaks_the_control_flow_lookup() {
     let challenges = mock_challenges();
-    let (trace, rom, data) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let (trace, rom, data) = trace_and_rom(&wat_from_fixture("func_add.wat"));
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -297,7 +303,7 @@ fn forging_a_height_breaks_the_control_flow_lookup() {
 #[test]
 fn forging_a_bus_access_value_breaks_the_permutation() {
     let challenges = mock_challenges();
-    let (trace, rom, data) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let (trace, rom, data) = trace_and_rom(&wat_from_fixture("func_add.wat"));
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -317,7 +323,7 @@ fn forging_a_bus_access_value_breaks_the_permutation() {
 #[test]
 fn dropping_a_bus_access_breaks_the_permutation() {
     let challenges = mock_challenges();
-    let (trace, rom, data) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let (trace, rom, data) = trace_and_rom(&wat_from_fixture("func_add.wat"));
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -337,7 +343,7 @@ fn dropping_a_bus_access_breaks_the_permutation() {
 #[test]
 fn forging_a_sorted_timestamp_breaks_the_permutation() {
     let challenges = mock_challenges();
-    let (trace, rom, data) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let (trace, rom, data) = trace_and_rom(&wat_from_fixture("func_add.wat"));
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -357,7 +363,7 @@ fn forging_a_sorted_timestamp_breaks_the_permutation() {
 #[test]
 fn an_access_on_the_terminal_padding_row_is_rejected() {
     let challenges = mock_challenges();
-    let (trace, rom, data) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let (trace, rom, data) = trace_and_rom(&wat_from_fixture("func_add.wat"));
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -377,7 +383,7 @@ fn an_access_on_the_terminal_padding_row_is_rejected() {
 #[test]
 fn corrupting_a_written_value_byte_fails_the_range_check() {
     let challenges = mock_challenges();
-    let (trace, rom, data) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let (trace, rom, data) = trace_and_rom(&wat_from_fixture("func_add.wat"));
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -397,7 +403,7 @@ fn corrupting_a_written_value_byte_fails_the_range_check() {
 #[test]
 fn corrupting_an_ordering_gap_byte_fails_the_range_check() {
     let challenges = mock_challenges();
-    let (trace, rom, data) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let (trace, rom, data) = trace_and_rom(&wat_from_fixture("func_add.wat"));
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -416,7 +422,7 @@ fn corrupting_an_ordering_gap_byte_fails_the_range_check() {
 #[test]
 fn a_byte_outside_the_table_fails_the_lookup() {
     let challenges = mock_challenges();
-    let (trace, rom, data) = trace_and_rom(&wat_from_file("func_add.wat"));
+    let (trace, rom, data) = trace_and_rom(&wat_from_fixture("func_add.wat"));
     let air = air_for(&trace, &rom, &data);
     let main = main_matrix(trace.columns(), trace.length());
     let perm = permutation_of(&main, &rom, &data, trace.initial_state(), challenges);
@@ -437,7 +443,7 @@ fn a_byte_outside_the_table_fails_the_lookup() {
 fn a_forged_initial_value_fails_the_boundary_lookup() {
     let challenges = mock_challenges();
     let (trace, rom, data) = trace_and_rom_entry(
-        &wat_from_file("func_add.wat"),
+        &wat_from_fixture("func_add.wat"),
         &Entry::Export("add".into()),
         &[Word::I32(7), Word::I32(5)],
     );
@@ -758,7 +764,7 @@ fn branch_direction_follows_the_condition() {
     let challenges = mock_challenges();
     for &(export, arg) in cases {
         let (trace, rom, data) = trace_and_rom_entry(
-            &wat_from_file("branch.wat"),
+            &wat_from_fixture("branch.wat"),
             &Entry::Export(export.into()),
             &[Word::I32(arg as u32)],
         );
@@ -780,7 +786,7 @@ fn redirecting_a_branch_to_its_sibling_edge_is_rejected() {
     // machine rejects it.
     let challenges = mock_challenges();
     let (trace, rom, data) = trace_and_rom_entry(
-        &wat_from_file("branch.wat"),
+        &wat_from_fixture("branch.wat"),
         &Entry::Export("if_pick".into()),
         &[Word::I32(1)],
     );
@@ -809,7 +815,7 @@ fn redirecting_a_branch_to_its_sibling_edge_is_rejected() {
 fn const_binds_its_pushed_value_to_the_module_immediate() {
     let challenges = mock_challenges();
     let (trace, rom, data) = trace_and_rom_entry(
-        &wat_from_file("const.wat"),
+        &wat_from_fixture("const.wat"),
         &Entry::Export("c64".into()),
         &[],
     );
@@ -855,7 +861,7 @@ fn a_forged_and_nibble_fails_the_bitwise_lookup() {
     // lookup---which pins the nibble to a genuine `a & b`---rejects the triple.
     let challenges = mock_challenges();
     let (trace, rom, data) = trace_and_rom_entry(
-        &wat_from_file("bitwise.wat"),
+        &wat_from_fixture("bitwise.wat"),
         &Entry::Export("and".into()),
         &[Word::I64(0xFF), Word::I64(0xFF)],
     );
@@ -886,7 +892,7 @@ fn a_forged_and_nibble_fails_the_bitwise_lookup() {
 fn program_rom_contains_every_executed_edge() {
     let mut checked = 0usize;
     for name in SINGLE_FRAME_FIXTURES {
-        let module = Module::decode(&wat_from_file(name)).expect("decode");
+        let module = Module::decode(&wat_from_fixture(name)).expect("decode");
         let program = lift(&module).expect("lift");
         let mut host = WasiSnapshotPreview1::new();
         let mut records = Vec::new();

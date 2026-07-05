@@ -1,7 +1,9 @@
 use ananse_decoder::Module;
 use ananse_executor::{Entry, NoHost, OpCode, Transition, Word, execute};
 use ananse_lift::lift;
-use ananse_tests::{SINGLE_FRAME_FIXTURES, trace_of, wat_from_file, wat_from_str};
+use ananse_tests::{
+    SINGLE_FRAME_FIXTURES, trace_of, wat_from_example, wat_from_fixture, wat_from_str,
+};
 use ananse_trace::layout::{
     self, BUS_SLOTS, COL_CLK, COL_PC, SELECTOR_BASE, bus_slot, slot, sorted, sorted_slot,
 };
@@ -106,7 +108,7 @@ fn assert_sorted_log_consistent(trace: &Trace, name: &str) {
 #[test]
 fn single_frame_fixtures_satisfy_trace_invariants() {
     for name in SINGLE_FRAME_FIXTURES {
-        let trace = trace_of(&wat_from_file(name));
+        let trace = trace_of(&wat_from_fixture(name));
         assert_selectors_one_hot(&trace, name);
         assert_reads_land_on_the_bus(&trace, name);
         assert_pc_follows_transitions(&trace, name);
@@ -131,16 +133,22 @@ fn single_frame_fixtures_satisfy_trace_invariants() {
 fn recursive_and_cross_function_calls_are_unsupported() {
     // `fib(5)` recurses past its base case; `call_doubler` calls a defined helper
     // unconditionally. Both cross a defined-function call frame.
-    let cases: &[(&str, Entry, &[Word])] = &[
+    let cases: [(&str, Vec<u8>, Entry, &[Word]); 2] = [
         (
             "fibonacci.wat",
+            wat_from_example("fibonacci.wat"),
             Entry::Export("fib".into()),
             &[Word::I32(5)],
         ),
-        ("func_call.wat", Entry::Auto, &[]),
+        (
+            "func_call.wat",
+            wat_from_fixture("func_call.wat"),
+            Entry::Auto,
+            &[],
+        ),
     ];
-    for (name, entry, args) in cases {
-        let module = Module::decode(&wat_from_file(name)).expect("decode");
+    for (name, bytes, entry, args) in &cases {
+        let module = Module::decode(bytes).expect("decode");
         let program = lift(&module).expect("lift");
         let mut host = WasiSnapshotPreview1::new();
         let mut records = Vec::new();
@@ -157,7 +165,7 @@ fn recursive_and_cross_function_calls_are_unsupported() {
 
 #[test]
 fn entryless_module_produces_no_trace() {
-    let module = Module::decode(&wat_from_file("memory.wat")).expect("decode");
+    let module = Module::decode(&wat_from_fixture("memory.wat")).expect("decode");
     let program = lift(&module).expect("lift");
     let mut records = Vec::new();
     execute(&module, &Entry::Auto, &[], &mut NoHost, &mut records).expect("execute");
@@ -195,7 +203,7 @@ fn store_then_load_round_trip_through_the_unified_log() {
 
 #[test]
 fn padding_rests_on_the_exit_sentinel_with_an_idle_bus() {
-    let module = Module::decode(&wat_from_file("i32_const.wat")).expect("decode");
+    let module = Module::decode(&wat_from_fixture("i32_const.wat")).expect("decode");
     let program = lift(&module).expect("lift");
     let mut host = WasiSnapshotPreview1::new();
     let mut records = Vec::new();
@@ -234,7 +242,7 @@ fn padding_rests_on_the_exit_sentinel_with_an_idle_bus() {
 
 #[test]
 fn a_binary_op_carries_operands_and_result_on_its_own_row() {
-    let module = Module::decode(&wat_from_file("func_add.wat")).expect("decode");
+    let module = Module::decode(&wat_from_fixture("func_add.wat")).expect("decode");
     let program = lift(&module).expect("lift");
     let mut records = Vec::new();
     execute(

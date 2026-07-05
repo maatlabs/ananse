@@ -46,4 +46,4 @@ wasmparser = { version = "0.252", default-features = false, features = [
     "validate",
     "features",
 ] }
-wat = "1.248"
+wat = "1.252"
