@@ -5,9 +5,9 @@ use wasmparser::{
     ExternalKind, Import, Imports, Parser, Payload, ValidPayload, Validator, WasmFeatures,
 };
 
-use crate::{DecodeError, Result, error as decode_error};
+use crate::{DecodeError, Result};
 
-/// The only import module namespace Ananse permits.
+/// The supported WebAssembly System Interface module namespace.
 pub const WASI_MODULE: &str = "wasi_snapshot_preview1";
 
 const ALLOWED_WASI_FUNCS: &[&str] = &["fd_write", "proc_exit"];
@@ -15,57 +15,79 @@ const ALLOWED_WASI_FUNCS: &[&str] = &["fd_write", "proc_exit"];
 /// A validated WebAssembly module.
 #[derive(Debug, Clone)]
 pub struct Module {
+    /// The raw bytes.
     bytes: Vec<u8>,
+    /// Imported metadata.
     imports: Vec<ImportEntry>,
+    /// Exported metadata.
     exports: Vec<ExportEntry>,
 }
 
 /// A single `(module, name)` import declared by a [`Module`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportEntry {
+    /// The import's module namespace.
     pub module: String,
+    /// The imported item's name.
     pub name: String,
 }
 
 /// A single export declared by a [`Module`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportEntry {
+    /// The export's name.
     pub name: String,
+    /// The kind of item being exported.
     pub kind: ExportKind,
+    /// The index of the exported item within its index space.
     pub index: u32,
 }
 
 /// The kind of item an [`ExportEntry`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportKind {
+    /// A function export.
     Function,
+    /// A table export.
     Table,
+    /// A linear-memory export.
     Memory,
+    /// A global export.
     Global,
 }
 
 impl Module {
+    /// Validates `bytes` against the WASM features that are enabled for validation,
+    /// extracting import/export metadata.
+    ///
+    /// Returns a [`DecodeError`] if the module is malformed, uses a feature outside the
+    /// allowed subset, or imports anything other than the permitted WASI functions.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         validate_module(bytes)?;
         decode_internal(bytes)
     }
 
+    /// The validated module's raw WebAssembly bytes.
     #[inline]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
 
+    /// The module's import declarations, in declaration order.
     #[inline]
     pub fn imports(&self) -> &[ImportEntry] {
         &self.imports
     }
 
+    /// The module's export declarations, in declaration order.
     #[inline]
     pub fn exports(&self) -> &[ExportEntry] {
         &self.exports
     }
 }
 
+/// WebAssembly proposals and features that are active during
+/// validation and parsing of WebAssembly binaries.
 fn wasm_features() -> WasmFeatures {
     let mut f = WasmFeatures::empty();
     f.insert(WasmFeatures::MUTABLE_GLOBAL);
@@ -75,14 +97,13 @@ fn wasm_features() -> WasmFeatures {
 fn validate_module(bytes: &[u8]) -> Result<()> {
     let mut validator = Validator::new_with_features(wasm_features());
     for payload in Parser::new(0).parse_all(bytes) {
-        let payload = payload.map_err(decode_error::invalid_binary)?;
+        let payload = payload.map_err(DecodeError::invalid_binary)?;
         let valid = validator
             .payload(&payload)
-            .map_err(decode_error::validation_failed)?;
+            .map_err(DecodeError::validation_failed)?;
         if let ValidPayload::Func(func, body) = valid {
             let mut fv = func.into_validator(Default::default());
-            fv.validate(&body)
-                .map_err(decode_error::validation_failed)?;
+            fv.validate(&body).map_err(DecodeError::validation_failed)?;
         }
     }
     Ok(())
@@ -93,17 +114,17 @@ fn decode_internal(bytes: &[u8]) -> Result<Module> {
     let mut exports = Vec::new();
 
     for payload in Parser::new(0).parse_all(bytes) {
-        let payload = payload.map_err(decode_error::invalid_binary)?;
+        let payload = payload.map_err(DecodeError::invalid_binary)?;
         match payload {
             Payload::ImportSection(reader) => {
                 for group in reader {
-                    let group = group.map_err(decode_error::invalid_binary)?;
+                    let group = group.map_err(DecodeError::invalid_binary)?;
                     add_import_group(group, &mut imports)?;
                 }
             }
             Payload::ExportSection(reader) => {
                 for item in reader {
-                    let export = item.map_err(decode_error::invalid_binary)?;
+                    let export = item.map_err(DecodeError::invalid_binary)?;
                     if let Some(kind) = from_external_kind(export.kind) {
                         exports.push(ExportEntry {
                             name: export.name.to_string(),
