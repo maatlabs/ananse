@@ -5,10 +5,7 @@ use wasmparser::{
     BlockType, CompositeInnerType, FunctionBody, Imports, Operator, Parser, Payload, TypeRef,
 };
 
-use crate::{
-    InstructionSchedule, LiftError, LiftedFunction, Register, Result, Successors,
-    error as lift_error,
-};
+use crate::{InstructionSchedule, LiftError, LiftedFunction, Register, Result, Successors};
 
 /// Upper bound on a function's register-file width.
 const MAX_REGISTER_FILE_WIDTH: u32 = 4096;
@@ -46,10 +43,10 @@ fn lift_function(
 
     let declared = body
         .get_locals_reader()
-        .map_err(lift_error::malformed)?
+        .map_err(LiftError::malformed)?
         .into_iter()
         .try_fold(0u32, |acc, local| {
-            let (count, _ty) = local.map_err(lift_error::malformed)?;
+            let (count, _ty) = local.map_err(LiftError::malformed)?;
             acc.checked_add(count)
                 .ok_or(LiftError::RegisterFileOverflow {
                     func_index,
@@ -67,10 +64,10 @@ fn lift_function(
 
     let mut lifter = Lifter::new(info, func_index, locals_count, result_arity);
 
-    let mut ops = body.get_operators_reader().map_err(lift_error::malformed)?;
+    let mut ops = body.get_operators_reader().map_err(LiftError::malformed)?;
     while !ops.eof() {
         let offset = ops.original_position();
-        let op = ops.read().map_err(lift_error::malformed)?;
+        let op = ops.read().map_err(LiftError::malformed)?;
         lifter.step(&op, offset)?;
     }
 
@@ -79,10 +76,15 @@ fn lift_function(
 
 /// Module-level facts the per-function lift needs.
 struct ModuleInfo<'a> {
+    /// `(params, results)` arity per type index.
     type_arities: Vec<(u32, u32)>,
+    /// Type index per function index (imported functions first).
     func_type_idx: Vec<u32>,
+    /// Count of imported functions, which occupy the low function indices.
     num_imported_funcs: u32,
+    /// Count of module globals.
     num_globals: u32,
+    /// Defined function bodies, in code-section order.
     bodies: Vec<FunctionBody<'a>>,
 }
 
@@ -95,10 +97,10 @@ impl<'a> ModuleInfo<'a> {
         let mut bodies = Vec::new();
 
         for payload in Parser::new(0).parse_all(bytes) {
-            match payload.map_err(lift_error::malformed)? {
+            match payload.map_err(LiftError::malformed)? {
                 Payload::TypeSection(reader) => {
                     for rec in reader {
-                        for sub in rec.map_err(lift_error::malformed)?.types() {
+                        for sub in rec.map_err(LiftError::malformed)?.types() {
                             let arity = match &sub.composite_type.inner {
                                 CompositeInnerType::Func(ft) => (
                                     u32::try_from(ft.params().len()).map_err(|_| {
@@ -116,7 +118,7 @@ impl<'a> ModuleInfo<'a> {
                 }
                 Payload::ImportSection(reader) => {
                     for group in reader {
-                        if let Imports::Single(_, import) = group.map_err(lift_error::malformed)?
+                        if let Imports::Single(_, import) = group.map_err(LiftError::malformed)?
                             && let TypeRef::Func(type_idx) | TypeRef::FuncExact(type_idx) =
                                 import.ty
                         {
@@ -129,7 +131,7 @@ impl<'a> ModuleInfo<'a> {
                 }
                 Payload::FunctionSection(reader) => {
                     for type_idx in reader {
-                        func_type_idx.push(type_idx.map_err(lift_error::malformed)?);
+                        func_type_idx.push(type_idx.map_err(LiftError::malformed)?);
                     }
                 }
                 Payload::GlobalSection(reader) => num_globals = reader.count(),
@@ -161,18 +163,30 @@ impl<'a> ModuleInfo<'a> {
 
 /// A WebAssembly structured-control frame, tracked as the lift walks a body.
 struct Frame {
+    /// Branch-target arity: values a branch carries to this label. Loops use
+    /// their input arity (the label is the loop header); all others use the
+    /// output arity (the label is past the matching `end`).
     in_arity: u32,
     out_arity: u32,
+    /// Operand-stack height at frame entry, below the frame's inputs.
     floor: u32,
+    /// Whether the current point in this frame is unreachable (dead code).
     unreachable: bool,
+    /// `Some(header_pc)` for a `loop`, whose branch target is its own header;
+    /// `None` for forward-closing frames.
     loop_header: Option<u32>,
+    /// Forward branches awaiting this frame's continuation, patched at `end`.
     fixups: Vec<Fixup>,
+    /// For an `if` frame, the `if` instruction whose `not_taken` target is still
+    /// pending an `else` or `end`.
     if_instr: Option<usize>,
 }
 
 /// A forward branch whose target becomes known when its frame closes.
 struct Fixup {
+    /// Index of the instruction whose successor target must be patched.
     instr: usize,
+    /// Which successor field of that instruction to patch.
     slot: Slot,
 }
 
@@ -297,6 +311,9 @@ impl<'a> Lifter<'a> {
         (0..n).try_for_each(|_| self.push_one())
     }
 
+    /// Pops one operand-stack slot, honouring the WASM validation rule that a
+    /// pop at the current frame's floor in unreachable code is polymorphic and
+    /// leaves the height unchanged.
     fn pop_one(&mut self) {
         let (floor, unreachable) = self
             .ctrl
@@ -317,6 +334,9 @@ impl<'a> Lifter<'a> {
         (0..n).for_each(|_| self.pop_one());
     }
 
+    /// Marks the current frame unreachable, resetting the height to its floor---
+    /// the WASM validation algorithm's treatment of code after an unconditional
+    /// branch, `return`, or `unreachable`.
     fn mark_unreachable(&mut self) {
         if let Some(frame) = self.ctrl.last_mut() {
             self.height = frame.floor;
@@ -348,7 +368,7 @@ impl<'a> Lifter<'a> {
             BlockType::FuncType(idx) => self
                 .info
                 .type_arity(*idx)
-                .ok_or_else(|| lift_error::internal("block references an undeclared type")),
+                .ok_or_else(|| LiftError::internal("block references an undeclared type")),
         }
     }
 
@@ -373,11 +393,14 @@ impl<'a> Lifter<'a> {
         self.push(in_arity)
     }
 
+    /// Closes the top frame at the `end` whose program point is `end_pc`.
+    ///
+    /// Returns `true` when the closed frame was the function frame.
     fn pop_ctrl(&mut self, end_pc: u32) -> Result<bool> {
         let frame = self
             .ctrl
             .pop()
-            .ok_or_else(|| lift_error::internal("`end` with no open control frame"))?;
+            .ok_or_else(|| LiftError::internal("`end` with no open control frame"))?;
         let continuation = end_pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
             func_index: self.func_index,
         })?;
@@ -431,17 +454,19 @@ impl<'a> Lifter<'a> {
         Ok(self.ctrl.is_empty())
     }
 
+    /// Resolves a branch to `relative_depth`, returning the target program point
+    /// and registering a fixup when the target frame closes forward.
     fn branch_target(&mut self, relative_depth: u32, instr: usize, slot: Slot) -> Result<u32> {
         let idx = self
             .ctrl
             .len()
             .checked_sub(1)
             .and_then(|top| top.checked_sub(relative_depth as usize))
-            .ok_or_else(|| lift_error::internal("branch depth exceeds the control stack"))?;
+            .ok_or_else(|| LiftError::internal("branch depth exceeds the control stack"))?;
         let frame = self
             .ctrl
             .get_mut(idx)
-            .ok_or_else(|| lift_error::internal("branch target frame is missing"))?;
+            .ok_or_else(|| LiftError::internal("branch target frame is missing"))?;
         match frame.loop_header {
             Some(header) => Ok(header),
             None => {
@@ -454,7 +479,7 @@ impl<'a> Lifter<'a> {
     fn stack_read(&self, depth_from_top: u32) -> Result<Register> {
         self.height
             .checked_sub(depth_from_top)
-            .ok_or_else(|| lift_error::internal("operand-stack read underflows the stack"))
+            .ok_or_else(|| LiftError::internal("operand-stack read underflows the stack"))
             .map(Register::Stack)
     }
 
@@ -480,10 +505,10 @@ impl<'a> Lifter<'a> {
             let base = self
                 .height
                 .checked_sub(eff.pops)
-                .ok_or_else(|| lift_error::internal("operand-stack write underflows the stack"))?;
+                .ok_or_else(|| LiftError::internal("operand-stack write underflows the stack"))?;
             for k in 0..eff.pushes {
                 let depth = base.checked_add(k).ok_or_else(|| {
-                    lift_error::internal("operand-stack write overflows the stack")
+                    LiftError::internal("operand-stack write overflows the stack")
                 })?;
                 writes.push(Register::Stack(depth));
             }
@@ -557,13 +582,13 @@ impl<'a> Lifter<'a> {
                     .ctrl
                     .len()
                     .checked_sub(1)
-                    .ok_or_else(|| lift_error::internal("`else` with no open control frame"))?;
+                    .ok_or_else(|| LiftError::internal("`else` with no open control frame"))?;
                 let (floor, in_arity, if_instr) = {
                     let frame = &mut self.ctrl[top];
                     (frame.floor, frame.in_arity, frame.if_instr.take())
                 };
                 let if_idx = if_instr
-                    .ok_or_else(|| lift_error::internal("`else` without a matching `if`"))?;
+                    .ok_or_else(|| LiftError::internal("`else` without a matching `if`"))?;
                 let else_body = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
                     func_index: self.func_index,
                 })?;
@@ -642,7 +667,7 @@ impl<'a> Lifter<'a> {
                 self.pop(1);
                 let mut resolved = Vec::new();
                 for (i, depth) in targets.targets().enumerate() {
-                    let depth = depth.map_err(lift_error::malformed)?;
+                    let depth = depth.map_err(LiftError::malformed)?;
                     resolved.push(self.branch_target(depth, pc as usize, Slot::TableEntry(i))?);
                 }
                 let default =
