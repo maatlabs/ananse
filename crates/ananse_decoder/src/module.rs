@@ -1,7 +1,8 @@
 use alloc::vec::Vec;
 
 use wasmparser::{
-    ExternalKind, Import, Imports, Parser, Payload, ValidPayload, Validator, WasmFeatures,
+    CompositeInnerType, ExternalKind, FunctionBody, Import, Imports, Parser, Payload, TypeRef,
+    ValidPayload, Validator, WasmFeatures,
 };
 
 use crate::{DecodeError, ExportEntry, ExportKind, ImportEntry, Result, WASI_MODULE};
@@ -31,7 +32,7 @@ impl Module {
     /// Validates `bytes` against the WASM features that are enabled for validation,
     /// extracting import/export metadata.
     ///
-    /// Returns a [`DecodeError`] if the module is malformed, uses a feature outside the
+    /// Returns a [`DecodeError`] if the module is invalid_binary, uses a feature outside the
     /// allowed subset, or imports anything other than the permitted WASI functions.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         validate(bytes)?;
@@ -150,4 +151,92 @@ fn enforce_import_allowlist(module: &str, name: &str) -> Result<()> {
         });
     }
     Ok(())
+}
+
+/// Module-level facts the per-function lift needs.
+pub struct ModuleInfo<'a> {
+    /// `(params, results)` arity per type index.
+    pub type_arities: Vec<(u32, u32)>,
+    /// Type index per function index (imported functions first).
+    pub func_type_idx: Vec<u32>,
+    /// Count of imported functions, which occupy the low function indices.
+    pub num_imported_funcs: u32,
+    /// Count of module globals.
+    pub num_globals: u32,
+    /// Defined function bodies, in code-section order.
+    pub bodies: Vec<FunctionBody<'a>>,
+}
+
+impl<'a> ModuleInfo<'a> {
+    pub fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let mut type_arities = Vec::new();
+        let mut func_type_idx = Vec::new();
+        let mut num_imported_funcs = 0u32;
+        let mut num_globals = 0u32;
+        let mut bodies = Vec::new();
+
+        for payload in Parser::new(0).parse_all(bytes) {
+            match payload.map_err(DecodeError::invalid_binary)? {
+                Payload::TypeSection(reader) => {
+                    for rec in reader {
+                        for sub in rec.map_err(DecodeError::invalid_binary)?.types() {
+                            let arity = match &sub.composite_type.inner {
+                                CompositeInnerType::Func(ft) => (
+                                    u32::try_from(ft.params().len()).map_err(|_| {
+                                        DecodeError::FunctionTooLarge { func_index: 0 }
+                                    })?,
+                                    u32::try_from(ft.results().len()).map_err(|_| {
+                                        DecodeError::FunctionTooLarge { func_index: 0 }
+                                    })?,
+                                ),
+                                _ => (0, 0),
+                            };
+                            type_arities.push(arity);
+                        }
+                    }
+                }
+                Payload::ImportSection(reader) => {
+                    for group in reader {
+                        if let Imports::Single(_, import) =
+                            group.map_err(DecodeError::invalid_binary)?
+                            && let TypeRef::Func(type_idx) | TypeRef::FuncExact(type_idx) =
+                                import.ty
+                        {
+                            func_type_idx.push(type_idx);
+                            num_imported_funcs = num_imported_funcs
+                                .checked_add(1)
+                                .ok_or(DecodeError::FunctionTooLarge { func_index: 0 })?;
+                        }
+                    }
+                }
+                Payload::FunctionSection(reader) => {
+                    for type_idx in reader {
+                        func_type_idx.push(type_idx.map_err(DecodeError::invalid_binary)?);
+                    }
+                }
+                Payload::GlobalSection(reader) => num_globals = reader.count(),
+                Payload::CodeSectionEntry(body) => bodies.push(body),
+                _ => {}
+            }
+        }
+
+        Ok(Self {
+            type_arities,
+            func_type_idx,
+            num_imported_funcs,
+            num_globals,
+            bodies,
+        })
+    }
+
+    /// `(params, results)` for a type index.
+    pub fn type_arity(&self, type_idx: u32) -> Option<(u32, u32)> {
+        self.type_arities.get(type_idx as usize).copied()
+    }
+
+    /// `(params, results)` for a function index, resolved through its type.
+    pub fn func_arity(&self, func_idx: u32) -> Option<(u32, u32)> {
+        let type_idx = *self.func_type_idx.get(func_idx as usize)?;
+        self.type_arity(type_idx)
+    }
 }

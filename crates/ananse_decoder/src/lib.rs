@@ -11,7 +11,7 @@ mod opcode;
 mod types;
 
 pub use error::DecodeError;
-pub use module::Module;
+pub use module::{Module, ModuleInfo};
 pub use opcode::OpCode;
 pub use types::{ExportEntry, ExportKind, Image, ImportEntry, Word, WordType};
 use wasmparser::Operator;

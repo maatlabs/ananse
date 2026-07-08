@@ -54,6 +54,13 @@ pub enum DecodeError {
     /// A load or store operation outside the bounds of linear memory.
     #[error("out-of-bounds memory access")]
     MemoryOutOfBounds,
+
+    /// A function body has more operators than can be indexed as program points.
+    #[error("function {func_index} has too many operators")]
+    FunctionTooLarge {
+        /// The offending function's index in the module function index space.
+        func_index: u32,
+    },
 }
 
 impl DecodeError {

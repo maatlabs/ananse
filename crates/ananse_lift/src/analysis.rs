@@ -1,9 +1,7 @@
-use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use wasmparser::{
-    BlockType, CompositeInnerType, FunctionBody, Imports, Operator, Parser, Payload, TypeRef,
-};
+use ananse_decoder::ModuleInfo;
+use wasmparser::{BlockType, FunctionBody, Operator};
 
 use crate::{InstructionSchedule, LiftError, LiftedFunction, Register, Result, Successors};
 
@@ -34,12 +32,9 @@ fn lift_function(
         .and_then(|i| info.num_imported_funcs.checked_add(i))
         .ok_or(LiftError::FunctionTooLarge { func_index: 0 })?;
 
-    let (param_count, result_arity) =
-        info.func_arity(func_index)
-            .ok_or(LiftError::MalformedModule {
-                offset: 0,
-                message: "function references an undeclared type".to_string(),
-            })?;
+    let (param_count, result_arity) = info.func_arity(func_index).ok_or(LiftError::internal(
+        "function references an undeclared type",
+    ))?;
 
     let declared = body
         .get_locals_reader()
@@ -72,93 +67,6 @@ fn lift_function(
     }
 
     lifter.finish()
-}
-
-/// Module-level facts the per-function lift needs.
-struct ModuleInfo<'a> {
-    /// `(params, results)` arity per type index.
-    type_arities: Vec<(u32, u32)>,
-    /// Type index per function index (imported functions first).
-    func_type_idx: Vec<u32>,
-    /// Count of imported functions, which occupy the low function indices.
-    num_imported_funcs: u32,
-    /// Count of module globals.
-    num_globals: u32,
-    /// Defined function bodies, in code-section order.
-    bodies: Vec<FunctionBody<'a>>,
-}
-
-impl<'a> ModuleInfo<'a> {
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let mut type_arities = Vec::new();
-        let mut func_type_idx = Vec::new();
-        let mut num_imported_funcs = 0u32;
-        let mut num_globals = 0u32;
-        let mut bodies = Vec::new();
-
-        for payload in Parser::new(0).parse_all(bytes) {
-            match payload.map_err(LiftError::malformed)? {
-                Payload::TypeSection(reader) => {
-                    for rec in reader {
-                        for sub in rec.map_err(LiftError::malformed)?.types() {
-                            let arity = match &sub.composite_type.inner {
-                                CompositeInnerType::Func(ft) => (
-                                    u32::try_from(ft.params().len()).map_err(|_| {
-                                        LiftError::FunctionTooLarge { func_index: 0 }
-                                    })?,
-                                    u32::try_from(ft.results().len()).map_err(|_| {
-                                        LiftError::FunctionTooLarge { func_index: 0 }
-                                    })?,
-                                ),
-                                _ => (0, 0),
-                            };
-                            type_arities.push(arity);
-                        }
-                    }
-                }
-                Payload::ImportSection(reader) => {
-                    for group in reader {
-                        if let Imports::Single(_, import) = group.map_err(LiftError::malformed)?
-                            && let TypeRef::Func(type_idx) | TypeRef::FuncExact(type_idx) =
-                                import.ty
-                        {
-                            func_type_idx.push(type_idx);
-                            num_imported_funcs = num_imported_funcs
-                                .checked_add(1)
-                                .ok_or(LiftError::FunctionTooLarge { func_index: 0 })?;
-                        }
-                    }
-                }
-                Payload::FunctionSection(reader) => {
-                    for type_idx in reader {
-                        func_type_idx.push(type_idx.map_err(LiftError::malformed)?);
-                    }
-                }
-                Payload::GlobalSection(reader) => num_globals = reader.count(),
-                Payload::CodeSectionEntry(body) => bodies.push(body),
-                _ => {}
-            }
-        }
-
-        Ok(Self {
-            type_arities,
-            func_type_idx,
-            num_imported_funcs,
-            num_globals,
-            bodies,
-        })
-    }
-
-    /// `(params, results)` for a type index.
-    fn type_arity(&self, type_idx: u32) -> Option<(u32, u32)> {
-        self.type_arities.get(type_idx as usize).copied()
-    }
-
-    /// `(params, results)` for a function index, resolved through its type.
-    fn func_arity(&self, func_idx: u32) -> Option<(u32, u32)> {
-        let type_idx = *self.func_type_idx.get(func_idx as usize)?;
-        self.type_arity(type_idx)
-    }
 }
 
 /// A WebAssembly structured-control frame, tracked as the lift walks a body.
@@ -409,10 +317,9 @@ impl<'a> Lifter<'a> {
             let succ = &mut self
                 .instrs
                 .get_mut(fixup.instr)
-                .ok_or(LiftError::MalformedModule {
-                    offset: 0,
-                    message: "branch fixup references a missing instruction".to_string(),
-                })?
+                .ok_or(LiftError::internal(
+                    "branch fixup references a missing instruction",
+                ))?
                 .successors;
             match (succ, &fixup.slot) {
                 (Successors::Jump(t), Slot::Jump) => *t = continuation,
@@ -424,10 +331,9 @@ impl<'a> Lifter<'a> {
                 }
                 (Successors::Table { default, .. }, Slot::TableDefault) => *default = continuation,
                 _ => {
-                    return Err(LiftError::MalformedModule {
-                        offset: 0,
-                        message: "branch fixup slot does not match its successor".to_string(),
-                    });
+                    return Err(LiftError::internal(
+                        "branch fixup slot does not match its successor",
+                    ));
                 }
             }
         }
@@ -723,10 +629,9 @@ impl<'a> Lifter<'a> {
 
     fn finish(self) -> Result<LiftedFunction> {
         if !self.ctrl.is_empty() {
-            return Err(LiftError::MalformedModule {
-                offset: 0,
-                message: "function body ended with an open control frame".to_string(),
-            });
+            return Err(LiftError::internal(
+                "function body ended with an open control frame",
+            ));
         }
 
         let width = u64::from(self.locals_count)
