@@ -19,7 +19,7 @@ use wasmparser::Operator;
 /// Result of WASM module decode/validate operations.
 pub type Result<T> = core::result::Result<T, DecodeError>;
 
-/// Bytes per WebAssembly memory page.
+/// Largest addressable size of a 32-bit linear memory, in pages.
 pub const WASM_PAGE_SIZE: usize = 65536;
 
 /// The supported WebAssembly System Interface module namespace.

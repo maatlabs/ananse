@@ -1,47 +1,17 @@
-use ananse_decoder::{Image, Module, OpCode, WASM_PAGE_SIZE, Word, WordType};
+use ananse_decoder::{Image, Module, OpCode, WASM_PAGE_SIZE, Word};
 use ananse_lift::{LiftedFunction, LiftedProgram, Register, Successors, lift};
 use wasmparser::Operator;
 
+use crate::record::{Control, Flow, Outcome, RtFrame};
 use crate::value::{Arithmetic, Compare, Unary, arithmetic, compare, unary};
 use crate::{
-    ExecuteError, Host, HostAction, MemAccess, RegAccess, Result, StepObserver, StepRecord,
+    Entry, ExecuteError, Host, HostAction, MemAccess, RegAccess, Result, StepObserver, StepRecord,
     Transition, Trap,
 };
 
 /// Maximum direct-call nesting before the executor reports
 /// [`Trap::CallStackExhausted`], bounding host stack use.
 const MAX_CALL_DEPTH: usize = 1024;
-
-/// Largest addressable size of a 32-bit linear memory, in pages.
-const WASM32_MAX_PAGES: usize = 65536;
-
-/// Where execution begins.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Entry {
-    /// Run the exported `_start`, else the first exported function, else the
-    /// first defined function; a module with no defined function runs nothing.
-    Auto,
-    /// Run the function at this index in the module function index space.
-    Function(u32),
-    /// Run the function exported under this name.
-    Export(String),
-}
-
-pub fn entry_parameters(module: &Module, entry: &Entry) -> Result<Vec<WordType>> {
-    let image = Image::parse(module.bytes())?;
-    let Some(func_index) = resolve_entry(&image, entry)? else {
-        return Ok(Vec::new());
-    };
-    let type_idx = *image
-        .func_types
-        .get(func_index as usize)
-        .ok_or(ExecuteError::UndefinedEntry)?;
-    let ty = image
-        .types
-        .get(type_idx as usize)
-        .ok_or(ExecuteError::UndefinedEntry)?;
-    Ok(ty.params.clone())
-}
 
 /// The outcome of an execution.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,7 +45,7 @@ pub fn execute<O: StepObserver, H: Host>(
     let program = lift(module)?;
     let image = Image::parse(module.bytes())?;
 
-    let Some(func_index) = resolve_entry(&image, entry)? else {
+    let Some(func_index) = entry.resolve(&image)? else {
         return Ok(Execution {
             returns: Vec::new(),
             exit: None,
@@ -116,25 +86,6 @@ pub fn execute<O: StepObserver, H: Host>(
     })
 }
 
-pub(crate) fn resolve_entry(image: &Image, entry: &Entry) -> Result<Option<u32>> {
-    match entry {
-        Entry::Function(idx) => Ok(Some(*idx)),
-        Entry::Export(name) => image
-            .func_exports
-            .iter()
-            .find(|(export, _)| export == name)
-            .map(|(_, idx)| Some(*idx))
-            .ok_or(ExecuteError::UndefinedEntry),
-        Entry::Auto => Ok(image
-            .func_exports
-            .iter()
-            .find(|(name, _)| name == "_start")
-            .or_else(|| image.func_exports.first())
-            .map(|(_, idx)| *idx)
-            .or_else(|| (!image.funcs.is_empty()).then_some(image.num_imported))),
-    }
-}
-
 fn entry_args(image: &Image, func_index: u32, params: u32, args: &[Word]) -> Result<Vec<Word>> {
     if args.is_empty() && params > 0 {
         let ty = &image.types[image.func_types[func_index as usize] as usize];
@@ -147,50 +98,6 @@ fn entry_args(image: &Image, func_index: u32, params: u32, args: &[Word]) -> Res
         });
     }
     Ok(args.to_vec())
-}
-
-/// A runtime control frame, tracked only for the data a branch needs: the values
-/// it carries and where it lands.
-struct RtFrame {
-    /// Whether the frame is a `loop` (its branch target is its own header).
-    is_loop: bool,
-    /// Values a branch to this label carries: the loop's input arity, or a
-    /// forward block's result arity.
-    branch_arity: u32,
-    /// Program point of the frame's matching `end`.
-    end_pc: u32,
-}
-
-/// What a function activation produced.
-enum Flow {
-    Return(Vec<Word>),
-    Exit(i32),
-}
-
-/// What executing a single operator produced.
-enum Control {
-    Advance(usize),
-    Return(Vec<Word>),
-    Exit(i32),
-}
-
-/// The record-bearing result of executing one operator.
-struct Outcome {
-    opcode: OpCode,
-    transition: Transition,
-    mem: Vec<MemAccess>,
-    control: Control,
-}
-
-impl Outcome {
-    fn advance(opcode: OpCode, next: usize) -> Self {
-        Outcome {
-            opcode,
-            transition: Transition::Next(next as u32),
-            mem: Vec::new(),
-            control: Control::Advance(next),
-        }
-    }
 }
 
 /// The mutable execution state: module-wide globals and linear memory, the
@@ -772,7 +679,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
         let old_pages = self.memory.len() / WASM_PAGE_SIZE;
         let grown = old_pages
             .checked_add(delta)
-            .filter(|&n| n <= WASM32_MAX_PAGES)
+            .filter(|&n| n <= WASM_PAGE_SIZE)
             .filter(|&n| self.max_pages.is_none_or(|m| n as u64 <= m))
             .and_then(|n| n.checked_mul(WASM_PAGE_SIZE).map(|bytes| (n, bytes)));
         let result = match grown {
