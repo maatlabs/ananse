@@ -17,5 +17,6 @@ std = ["thiserror/std", "wasmparser/std"]
 alloc = []
 
 [dependencies]
+p3-goldilocks = { workspace = true }
 thiserror = { workspace = true }
 wasmparser = { workspace = true }

@@ -9,19 +9,15 @@
 
 mod error;
 mod host;
-mod image;
 mod interp;
 mod record;
 mod value;
 
+pub use ananse_decoder::{OpCode, Word};
 pub use error::{ExecuteError, Trap};
 pub use host::{Host, HostAction, NoHost};
-pub use image::{
-    WordType, entry_parameters, function_constants, function_opcodes, global_initializers,
-};
-pub use interp::{Entry, Execution, execute};
-pub use record::{MemAccess, OpCode, RegAccess, StepObserver, StepRecord, Transition};
-pub use value::Word;
+pub use interp::{Entry, Execution, entry_parameters, execute};
+pub use record::{MemAccess, RegAccess, StepObserver, StepRecord, Transition};
 
 /// Result of module execution operations.
 pub type Result<T> = core::result::Result<T, ExecuteError>;

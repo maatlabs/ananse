@@ -1,0 +1,333 @@
+use wasmparser::{
+    BlockType, CompositeInnerType, ConstExpr, DataKind, FunctionBody, Imports, Operator, Parser,
+    Payload, TypeRef, ValType,
+};
+
+use crate::{DecodeError, ImportEntry, Module, OpCode, Result, Word};
+
+/// Bytes per WebAssembly memory page.
+pub const PAGE_SIZE: usize = 65536;
+
+/// The [`OpCode`] of every operator in a defined function's body, indexed by
+/// program point.
+pub fn function_opcodes(module: &Module, func_index: u32) -> Result<Vec<OpCode>> {
+    let image = Image::parse(module.bytes())?;
+    let func = image
+        .funcs
+        .iter()
+        .find(|f| f.func_index == func_index)
+        .ok_or_else(|| DecodeError::internal("no defined function for the requested index"))?;
+    func.ops.iter().map(OpCode::from_operator).collect()
+}
+
+pub fn global_initializers(module: &Module) -> Result<Vec<Word>> {
+    Ok(Image::parse(module.bytes())?.globals)
+}
+
+pub fn function_constants(module: &Module, func_index: u32) -> Result<Vec<Option<u64>>> {
+    let image = Image::parse(module.bytes())?;
+    let func = image
+        .funcs
+        .iter()
+        .find(|f| f.func_index == func_index)
+        .ok_or_else(|| DecodeError::internal("no defined function for the requested index"))?;
+    Ok(func.ops.iter().map(operator_constant).collect())
+}
+
+fn operator_constant(op: &Operator) -> Option<u64> {
+    match op {
+        Operator::I32Const { value } => Some(u64::from(*value as u32)),
+        Operator::I64Const { value } => Some(*value as u64),
+        _ => None,
+    }
+}
+
+/// An executable view of a validated module.
+pub struct Image<'a> {
+    pub types: Vec<FnType>,
+    pub func_types: Vec<u32>,
+    pub num_imported: u32,
+    pub imports: Vec<ImportEntry>,
+    pub globals: Vec<Word>,
+    pub funcs: Vec<FuncImage<'a>>,
+    pub func_exports: Vec<(String, u32)>,
+    pub memory: Vec<u8>,
+    pub max_pages: Option<u64>,
+}
+
+pub struct FnType {
+    pub params: Vec<ValTy>,
+    pub results: u32,
+}
+
+/// A defined function's executable image.
+pub struct FuncImage<'a> {
+    pub func_index: u32,
+    pub type_idx: u32,
+    pub declared: Vec<ValTy>,
+    pub ops: Vec<Operator<'a>>,
+    /// `ends[pc]` is the `end` program point of the `block` / `loop` / `if` that
+    /// opens at `pc`; `0` for every other program point.
+    pub ends: Vec<u32>,
+}
+
+/// A value type in Ananse's integer subset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValTy {
+    I32,
+    I64,
+}
+
+impl ValTy {
+    /// The zero value of this type.
+    pub fn zero(self) -> Word {
+        match self {
+            ValTy::I32 => Word::I32(0),
+            ValTy::I64 => Word::I64(0),
+        }
+    }
+}
+
+fn val_ty(ty: ValType) -> Result<ValTy> {
+    match ty {
+        ValType::I32 => Ok(ValTy::I32),
+        ValType::I64 => Ok(ValTy::I64),
+        _ => Err(DecodeError::internal(
+            "value type outside the integer subset",
+        )),
+    }
+}
+
+impl<'a> Image<'a> {
+    pub fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let mut types = Vec::new();
+        let mut func_types = Vec::new();
+        let mut num_imported = 0u32;
+        let mut imports = Vec::new();
+        let mut globals = Vec::new();
+        let mut funcs = Vec::new();
+        let mut func_exports = Vec::new();
+        let mut memory: Vec<u8> = Vec::new();
+        let mut max_pages = None;
+
+        for payload in Parser::new(0).parse_all(bytes) {
+            match payload.map_err(DecodeError::invalid_binary)? {
+                Payload::TypeSection(reader) => {
+                    for rec in reader {
+                        for sub in rec.map_err(DecodeError::invalid_binary)?.types() {
+                            types.push(fn_type(&sub.composite_type.inner)?);
+                        }
+                    }
+                }
+                Payload::ImportSection(reader) => {
+                    for group in reader {
+                        if let Imports::Single(_, import) =
+                            group.map_err(DecodeError::invalid_binary)?
+                            && let TypeRef::Func(type_idx) | TypeRef::FuncExact(type_idx) =
+                                import.ty
+                        {
+                            func_types.push(type_idx);
+                            imports.push(ImportEntry {
+                                module: import.module.into(),
+                                name: import.name.into(),
+                            });
+                            num_imported = num_imported.checked_add(1).ok_or_else(|| {
+                                DecodeError::internal("too many imported functions")
+                            })?;
+                        }
+                    }
+                }
+                Payload::FunctionSection(reader) => {
+                    for type_idx in reader {
+                        func_types.push(type_idx.map_err(DecodeError::invalid_binary)?);
+                    }
+                }
+                Payload::MemorySection(reader) => {
+                    for mem in reader {
+                        let mem = mem.map_err(DecodeError::invalid_binary)?;
+                        let bytes = usize::try_from(mem.initial)
+                            .ok()
+                            .and_then(|pages| pages.checked_mul(PAGE_SIZE))
+                            .ok_or_else(|| {
+                                DecodeError::internal("initial memory size overflows")
+                            })?;
+                        memory = vec![0u8; bytes];
+                        max_pages = mem.maximum;
+                    }
+                }
+                Payload::GlobalSection(reader) => {
+                    for global in reader {
+                        globals.push(eval_const(
+                            &global.map_err(DecodeError::invalid_binary)?.init_expr,
+                        )?);
+                    }
+                }
+                Payload::ExportSection(reader) => {
+                    for export in reader {
+                        let export = export.map_err(DecodeError::invalid_binary)?;
+                        if matches!(export.kind, wasmparser::ExternalKind::Func) {
+                            func_exports.push((export.name.into(), export.index));
+                        }
+                    }
+                }
+                Payload::DataSection(reader) => {
+                    for data in reader {
+                        let data = data.map_err(DecodeError::invalid_binary)?;
+                        if let DataKind::Active { offset_expr, .. } = data.kind {
+                            let offset = match eval_const(&offset_expr)? {
+                                Word::I32(v) => v as usize,
+                                Word::I64(v) => usize::try_from(v)
+                                    .map_err(|_| DecodeError::internal("data offset overflows"))?,
+                            };
+                            let end = offset
+                                .checked_add(data.data.len())
+                                .filter(|&end| end <= memory.len())
+                                .ok_or(DecodeError::MemoryOutOfBounds)?;
+                            memory[offset..end].copy_from_slice(data.data);
+                        }
+                    }
+                }
+                Payload::CodeSectionEntry(body) => {
+                    let index = u32::try_from(funcs.len())
+                        .ok()
+                        .and_then(|i| num_imported.checked_add(i))
+                        .ok_or_else(|| DecodeError::internal("too many functions"))?;
+                    funcs.push(func_image(index, &func_types, &body)?);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(Self {
+            types,
+            func_types,
+            num_imported,
+            imports,
+            globals,
+            funcs,
+            func_exports,
+            memory,
+            max_pages,
+        })
+    }
+
+    /// The `(parameter count, result count)` of a function by index.
+    pub fn func_arity(&self, func_idx: u32) -> Option<(u32, u32)> {
+        let ty = self
+            .types
+            .get(*self.func_types.get(func_idx as usize)? as usize)?;
+        Some((u32::try_from(ty.params.len()).ok()?, ty.results))
+    }
+
+    /// The `(input arity, result arity)` of a block type.
+    pub fn block_arity(&self, blockty: &BlockType) -> Result<(u32, u32)> {
+        match blockty {
+            BlockType::Empty => Ok((0, 0)),
+            BlockType::Type(_) => Ok((0, 1)),
+            BlockType::FuncType(idx) => {
+                let ty = self
+                    .types
+                    .get(*idx as usize)
+                    .ok_or_else(|| DecodeError::internal("block references an undeclared type"))?;
+                Ok((
+                    u32::try_from(ty.params.len())
+                        .map_err(|_| DecodeError::internal("block parameter count overflows"))?,
+                    ty.results,
+                ))
+            }
+        }
+    }
+}
+
+fn fn_type(inner: &CompositeInnerType) -> Result<FnType> {
+    match inner {
+        CompositeInnerType::Func(ft) => Ok(FnType {
+            params: ft
+                .params()
+                .iter()
+                .copied()
+                .map(val_ty)
+                .collect::<Result<_>>()?,
+            results: u32::try_from(ft.results().len())
+                .map_err(|_| DecodeError::internal("result count overflows"))?,
+        }),
+        _ => Ok(FnType {
+            params: Vec::new(),
+            results: 0,
+        }),
+    }
+}
+
+fn func_image<'a>(
+    index: u32,
+    func_types: &[u32],
+    body: &FunctionBody<'a>,
+) -> Result<FuncImage<'a>> {
+    let type_idx = *func_types
+        .get(index as usize)
+        .ok_or_else(|| DecodeError::internal("function references an undeclared type"))?;
+
+    let declared = body
+        .get_locals_reader()
+        .map_err(DecodeError::invalid_binary)?
+        .into_iter()
+        .map(|local| {
+            let (count, ty) = local.map_err(DecodeError::invalid_binary)?;
+            Ok((0..count).map(move |_| val_ty(ty)))
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Result<Vec<ValTy>>>()?;
+
+    let mut reader = body
+        .get_operators_reader()
+        .map_err(DecodeError::invalid_binary)?;
+    let mut ops = Vec::new();
+    while !reader.eof() {
+        ops.push(reader.read().map_err(DecodeError::invalid_binary)?);
+    }
+
+    let ends = block_ends(&ops)?;
+
+    Ok(FuncImage {
+        func_index: index,
+        type_idx,
+        declared,
+        ops,
+        ends,
+    })
+}
+
+/// Maps each structured block opening to its matching `end` program point.
+fn block_ends(ops: &[Operator]) -> Result<Vec<u32>> {
+    let mut ends = vec![0u32; ops.len()];
+    let mut open: Vec<usize> = Vec::new();
+    for (pc, op) in ops.iter().enumerate() {
+        match op {
+            Operator::Block { .. } | Operator::Loop { .. } | Operator::If { .. } => open.push(pc),
+            Operator::End => {
+                if let Some(start) = open.pop() {
+                    ends[start] = u32::try_from(pc)
+                        .map_err(|_| DecodeError::internal("function body too large"))?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(ends)
+}
+
+/// Evaluates a constant initializer expression to a single value. Ananse's subset
+/// admits only `i32.const` / `i64.const` initializers.
+fn eval_const(expr: &ConstExpr) -> Result<Word> {
+    let mut reader = expr.get_operators_reader();
+    let value = match reader.read().map_err(DecodeError::invalid_binary)? {
+        Operator::I32Const { value } => Word::I32(value as u32),
+        Operator::I64Const { value } => Word::I64(value as u64),
+        _ => {
+            return Err(DecodeError::internal("unsupported constant initializer"));
+        }
+    };
+    Ok(value)
+}

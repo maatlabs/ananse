@@ -1,11 +1,10 @@
-use ananse_decoder::Module;
+use ananse_decoder::{Image, Module, OpCode, PAGE_SIZE, ValTy, Word, WordType};
 use ananse_lift::{LiftedFunction, LiftedProgram, Register, Successors, lift};
 use wasmparser::Operator;
 
-use crate::image::{Image, PAGE_SIZE};
-use crate::value::{Arithmetic, Compare, Unary, Word, arithmetic, compare, unary};
+use crate::value::{Arithmetic, Compare, Unary, arithmetic, compare, unary};
 use crate::{
-    ExecuteError, Host, HostAction, MemAccess, OpCode, RegAccess, Result, StepObserver, StepRecord,
+    ExecuteError, Host, HostAction, MemAccess, RegAccess, Result, StepObserver, StepRecord,
     Transition, Trap,
 };
 
@@ -26,6 +25,29 @@ pub enum Entry {
     Function(u32),
     /// Run the function exported under this name.
     Export(String),
+}
+
+pub fn entry_parameters(module: &Module, entry: &Entry) -> Result<Vec<WordType>> {
+    let image = Image::parse(module.bytes())?;
+    let Some(func_index) = resolve_entry(&image, entry)? else {
+        return Ok(Vec::new());
+    };
+    let type_idx = *image
+        .func_types
+        .get(func_index as usize)
+        .ok_or(ExecuteError::UndefinedEntry)?;
+    let ty = image
+        .types
+        .get(type_idx as usize)
+        .ok_or(ExecuteError::UndefinedEntry)?;
+    Ok(ty
+        .params
+        .iter()
+        .map(|&param| match param {
+            ValTy::I32 => WordType::I32,
+            ValTy::I64 => WordType::I64,
+        })
+        .collect())
 }
 
 /// The outcome of an execution.
@@ -257,7 +279,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                         end_pc: func.ends[pc],
                     });
                     let Successors::Branch { taken, not_taken } = sched.successors else {
-                        return Err(ExecuteError::inconsistent(
+                        return Err(ExecuteError::invalid_binary(
                             "`if` without a branch successor",
                         ));
                     };
@@ -267,7 +289,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                 }
                 Operator::Else => {
                     let Successors::Jump(target) = sched.successors else {
-                        return Err(ExecuteError::inconsistent(
+                        return Err(ExecuteError::invalid_binary(
                             "`else` without a jump successor",
                         ));
                     };
@@ -292,7 +314,9 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
 
                 Operator::Br { relative_depth } => {
                     let Successors::Jump(target) = sched.successors else {
-                        return Err(ExecuteError::inconsistent("`br` without a jump successor"));
+                        return Err(ExecuteError::invalid_binary(
+                            "`br` without a jump successor",
+                        ));
                     };
                     let control = branch_to(
                         &mut stack,
@@ -312,7 +336,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                 Operator::BrIf { relative_depth } => {
                     let cond = pop(&mut stack)?;
                     let Successors::Branch { taken, not_taken } = sched.successors else {
-                        return Err(ExecuteError::inconsistent(
+                        return Err(ExecuteError::invalid_binary(
                             "`br_if` without a branch successor",
                         ));
                     };
@@ -343,14 +367,14 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                         default,
                     } = &sched.successors
                     else {
-                        return Err(ExecuteError::inconsistent(
+                        return Err(ExecuteError::invalid_binary(
                             "`br_table` without a table successor",
                         ));
                     };
                     let depths = targets
                         .targets()
                         .collect::<core::result::Result<Vec<u32>, _>>()
-                        .map_err(|e| ExecuteError::inconsistent(&e.to_string()))?;
+                        .map_err(|e| ExecuteError::invalid_binary(&e.to_string()))?;
                     let (depth_to, target) = if selector < depths.len() {
                         (depths[selector], target_pcs[selector])
                     } else {
@@ -378,7 +402,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                 Operator::Call { function_index } => {
                     let f = *function_index;
                     let (params, _) = image.func_arity(f).ok_or_else(|| {
-                        ExecuteError::inconsistent("call to an undeclared function")
+                        ExecuteError::invalid_binary("call to an undeclared function")
                     })?;
                     let call_args = take_top(&mut stack, params)?;
                     if f < image.num_imported {
@@ -441,33 +465,31 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                 Operator::LocalGet { local_index } => {
                     let value = *locals
                         .get(*local_index as usize)
-                        .ok_or_else(|| ExecuteError::inconsistent("local index out of range"))?;
+                        .ok_or_else(|| ExecuteError::invalid_binary("local index out of range"))?;
                     stack.push(value);
                     Outcome::advance(OpCode::LocalGet, pc + 1)
                 }
                 Operator::LocalSet { local_index } => {
                     let value = pop(&mut stack)?;
-                    *locals
-                        .get_mut(*local_index as usize)
-                        .ok_or_else(|| ExecuteError::inconsistent("local index out of range"))? =
-                        value;
+                    *locals.get_mut(*local_index as usize).ok_or_else(|| {
+                        ExecuteError::invalid_binary("local index out of range")
+                    })? = value;
                     Outcome::advance(OpCode::LocalSet, pc + 1)
                 }
                 Operator::LocalTee { local_index } => {
                     let value = *stack
                         .last()
-                        .ok_or_else(|| ExecuteError::inconsistent("operand stack underflow"))?;
-                    *locals
-                        .get_mut(*local_index as usize)
-                        .ok_or_else(|| ExecuteError::inconsistent("local index out of range"))? =
-                        value;
+                        .ok_or_else(|| ExecuteError::invalid_binary("operand stack underflow"))?;
+                    *locals.get_mut(*local_index as usize).ok_or_else(|| {
+                        ExecuteError::invalid_binary("local index out of range")
+                    })? = value;
                     Outcome::advance(OpCode::LocalTee, pc + 1)
                 }
                 Operator::GlobalGet { global_index } => {
                     let value = *self
                         .globals
                         .get(*global_index as usize)
-                        .ok_or_else(|| ExecuteError::inconsistent("global index out of range"))?;
+                        .ok_or_else(|| ExecuteError::invalid_binary("global index out of range"))?;
                     stack.push(value);
                     Outcome::advance(OpCode::GlobalGet, pc + 1)
                 }
@@ -476,8 +498,9 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     *self
                         .globals
                         .get_mut(*global_index as usize)
-                        .ok_or_else(|| ExecuteError::inconsistent("global index out of range"))? =
-                        value;
+                        .ok_or_else(|| {
+                            ExecuteError::invalid_binary("global index out of range")
+                        })? = value;
                     Outcome::advance(OpCode::GlobalSet, pc + 1)
                 }
 
@@ -788,16 +811,16 @@ fn branch_to(
         .len()
         .checked_sub(1)
         .and_then(|top| top.checked_sub(relative_depth as usize))
-        .ok_or_else(|| ExecuteError::inconsistent("branch depth exceeds the control stack"))?;
+        .ok_or_else(|| ExecuteError::invalid_binary("branch depth exceeds the control stack"))?;
     let frame = frames
         .get(target_idx)
-        .ok_or_else(|| ExecuteError::inconsistent("branch target frame is missing"))?;
+        .ok_or_else(|| ExecuteError::invalid_binary("branch target frame is missing"))?;
     let (arity, is_loop) = (frame.branch_arity as usize, frame.is_loop);
     let target_height = lf
         .instrs
         .get(target as usize)
         .map(|instr| instr.height_in as usize)
-        .ok_or_else(|| ExecuteError::inconsistent("branch target out of range"))?;
+        .ok_or_else(|| ExecuteError::invalid_binary("branch target out of range"))?;
     unwind_stack(stack, target_height, arity)?;
     frames.truncate(if is_loop { target_idx + 1 } else { target_idx });
     Ok(Control::Advance(target as usize))
@@ -806,11 +829,11 @@ fn branch_to(
 fn unwind_stack(stack: &mut Vec<Word>, target_height: usize, arity: usize) -> Result<()> {
     let keep = target_height
         .checked_sub(arity)
-        .ok_or_else(|| ExecuteError::inconsistent("branch arity exceeds the target height"))?;
+        .ok_or_else(|| ExecuteError::invalid_binary("branch arity exceeds the target height"))?;
     let from = stack
         .len()
         .checked_sub(arity)
-        .ok_or_else(|| ExecuteError::inconsistent("branch arity exceeds the stack height"))?;
+        .ok_or_else(|| ExecuteError::invalid_binary("branch arity exceeds the stack height"))?;
     let carried = stack.split_off(from);
     stack.truncate(keep);
     stack.extend(carried);
@@ -821,7 +844,7 @@ fn take_top(stack: &mut Vec<Word>, n: u32) -> Result<Vec<Word>> {
     let at = stack
         .len()
         .checked_sub(n as usize)
-        .ok_or_else(|| ExecuteError::inconsistent("arity exceeds the stack height"))?;
+        .ok_or_else(|| ExecuteError::invalid_binary("arity exceeds the stack height"))?;
     Ok(stack.split_off(at))
 }
 
@@ -845,7 +868,7 @@ fn transition_of(control: &Control) -> Transition {
 fn pop(stack: &mut Vec<Word>) -> Result<Word> {
     stack
         .pop()
-        .ok_or_else(|| ExecuteError::inconsistent("operand stack underflow"))
+        .ok_or_else(|| ExecuteError::invalid_binary("operand stack underflow"))
 }
 
 fn pop_u32(stack: &mut Vec<Word>) -> Result<u32> {
@@ -929,5 +952,5 @@ fn read_reg(reg: Register, stack: &[Word], locals: &[Word], globals: &[Word]) ->
         Register::Global(g) => globals.get(g as usize).copied(),
         Register::Stack(d) => stack.get(d as usize).copied(),
     };
-    value.ok_or_else(|| ExecuteError::inconsistent("register access out of range"))
+    value.ok_or_else(|| ExecuteError::invalid_binary("register access out of range"))
 }

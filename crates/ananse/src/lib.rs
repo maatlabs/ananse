@@ -24,11 +24,9 @@
 
 pub use ananse_air as air;
 pub use ananse_decoder as decoder;
-use ananse_decoder::{DecodeError, Module};
+use ananse_decoder::{DecodeError, Module, Word, WordType};
 pub use ananse_executor as executor;
-use ananse_executor::{
-    Entry, ExecuteError, Execution, Host, NoHost, Word, WordType, entry_parameters, execute,
-};
+use ananse_executor::{Entry, ExecuteError, Execution, Host, NoHost, entry_parameters, execute};
 pub use ananse_lift as lift;
 pub use ananse_trace as trace;
 pub use ananse_wasi as wasi;
@@ -114,8 +112,8 @@ impl<H: Host> Runtime<H> {
 /// The items most callers need to decode, run, and inspect a module. Glob-import
 /// with `use ananse::prelude::*;`.
 pub mod prelude {
-    pub use crate::decoder::Module;
-    pub use crate::executor::{Entry, Execution, Word, WordType};
+    pub use crate::decoder::{Module, Word, WordType};
+    pub use crate::executor::{Entry, Execution};
     pub use crate::wasi::WasiSnapshotPreview1;
     pub use crate::{Error, Result, Runtime};
 }

@@ -1,11 +1,10 @@
-use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use wasmparser::{
     ExternalKind, Import, Imports, Parser, Payload, ValidPayload, Validator, WasmFeatures,
 };
 
-use crate::{DecodeError, Result};
+use crate::{DecodeError, ExportEntry, ExportKind, ImportEntry, Result};
 
 /// The supported WebAssembly System Interface module namespace.
 pub const WASI_MODULE: &str = "wasi_snapshot_preview1";
@@ -21,39 +20,6 @@ pub struct Module {
     imports: Vec<ImportEntry>,
     /// Exported metadata.
     exports: Vec<ExportEntry>,
-}
-
-/// A single `(module, name)` import declared by a [`Module`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ImportEntry {
-    /// The import's module namespace.
-    pub module: String,
-    /// The imported item's name.
-    pub name: String,
-}
-
-/// A single export declared by a [`Module`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExportEntry {
-    /// The export's name.
-    pub name: String,
-    /// The kind of item being exported.
-    pub kind: ExportKind,
-    /// The index of the exported item within its index space.
-    pub index: u32,
-}
-
-/// The kind of item an [`ExportEntry`] refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExportKind {
-    /// A function export.
-    Function,
-    /// A table export.
-    Table,
-    /// A linear-memory export.
-    Memory,
-    /// A global export.
-    Global,
 }
 
 impl Module {

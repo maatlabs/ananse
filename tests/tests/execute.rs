@@ -1,8 +1,5 @@
-use ananse_decoder::Module;
-use ananse_executor::{
-    Entry, ExecuteError, MemAccess, NoHost, OpCode, StepRecord, Trap, Word, execute,
-    function_opcodes,
-};
+use ananse_decoder::{Module, OpCode, Word, function_opcodes};
+use ananse_executor::{Entry, ExecuteError, MemAccess, NoHost, StepRecord, Trap, execute};
 use ananse_lift::{Register, lift};
 use ananse_tests::{FIXTURE_FILES, WAT_SNIPPETS, wat_from_example, wat_from_fixture, wat_from_str};
 use ananse_wasi::WasiSnapshotPreview1;

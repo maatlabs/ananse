@@ -1,21 +1,16 @@
+use ananse_decoder::DecodeError;
 use ananse_lift::LiftError;
-use wasmparser::BinaryReaderError;
 
 /// An error produced while executing a validated module.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ExecuteError {
+    /// The module's bytes could not be parsed into an executable image.
+    #[error("failed to decode module: {0}")]
+    Decode(#[from] DecodeError),
+
     /// The static register schedule could not be built for the module.
     #[error("failed to lift module: {0}")]
     Lift(#[from] LiftError),
-
-    /// The module's bytes could not be parsed into an executable image.
-    #[error("malformed module at offset {offset}: {message}")]
-    MalformedModule {
-        /// Byte offset at which parsing failed.
-        offset: usize,
-        /// Human-readable detail from the underlying parser.
-        message: String,
-    },
 
     /// An operator the executor does not implement was reached.
     #[error("unsupported operator at offset {offset}: {message}")]
@@ -71,24 +66,13 @@ pub enum ExecuteError {
 }
 
 impl ExecuteError {
-    /// Reports that the module's bytes could not be parsed
-    /// into an executable image, showing the actual offset and
-    /// message.
-    pub fn malformed(e: BinaryReaderError) -> ExecuteError {
-        ExecuteError::MalformedModule {
-            offset: e.offset(),
-            message: e.to_string(),
-        }
-    }
-
-    /// Reports that the module's bytes could not be parsed
-    /// into an executable image, from offset 0 and with a
-    /// custom message.
-    pub fn inconsistent(message: &str) -> ExecuteError {
-        ExecuteError::MalformedModule {
+    /// Reports that the underlying byte stream is not a well-formed WASM binary,
+    /// from offset 0 and with a custom message.
+    pub fn invalid_binary(message: &str) -> Self {
+        Self::Decode(DecodeError::InvalidBinary {
             offset: 0,
             message: message.into(),
-        }
+        })
     }
 }
 

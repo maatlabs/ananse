@@ -9,8 +9,8 @@ Register-column execution trace and linear-memory access log for the Ananse zkVM
 ## Usage
 
 ```rust
-use ananse_decoder::Module;
-use ananse_executor::{Entry, execute, global_initializers};
+use ananse_decoder::{global_initializers, Module};
+use ananse_executor::{Entry, execute};
 use ananse_lift::lift;
 use ananse_trace::Trace;
 use ananse_wasi::WasiSnapshotPreview1;

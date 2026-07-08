@@ -50,10 +50,15 @@ pub enum DecodeError {
         /// The rejected WASI function name.
         name: String,
     },
+
+    /// A load or store operation outside the bounds of linear memory.
+    #[error("out-of-bounds memory access")]
+    MemoryOutOfBounds,
 }
 
 impl DecodeError {
-    /// Reports that the byte stream is not a well-formed WASM binary.
+    /// Reports that the byte stream is not a well-formed WASM binary,
+    /// showing the actual offset and message.
     pub fn invalid_binary(e: BinaryReaderError) -> Self {
         Self::InvalidBinary {
             offset: e.offset(),
@@ -67,6 +72,15 @@ impl DecodeError {
         Self::ValidationFailed {
             offset: e.offset(),
             message: e.to_string(),
+        }
+    }
+
+    /// Reports that the byte stream is not a well-formed WASM binary,
+    /// from offset 0 and with a custom message.
+    pub(crate) fn internal(message: &str) -> Self {
+        Self::InvalidBinary {
+            offset: 0,
+            message: message.into(),
         }
     }
 }

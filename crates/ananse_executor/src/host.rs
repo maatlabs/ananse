@@ -1,6 +1,6 @@
-use ananse_decoder::ImportEntry;
+use ananse_decoder::{ImportEntry, Word};
 
-use crate::{ExecuteError, Result, Word};
+use crate::{ExecuteError, Result};
 
 /// The host environment imported functions are dispatched to.
 pub trait Host {

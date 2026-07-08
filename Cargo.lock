@@ -35,6 +35,7 @@ dependencies = [
 name = "ananse_decoder"
 version = "0.2.0"
 dependencies = [
+ "p3-goldilocks",
  "thiserror",
  "wasmparser",
 ]
