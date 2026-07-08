@@ -4,12 +4,17 @@ use wasmparser::{
     ExternalKind, Import, Imports, Parser, Payload, ValidPayload, Validator, WasmFeatures,
 };
 
-use crate::{DecodeError, ExportEntry, ExportKind, ImportEntry, Result};
-
-/// The supported WebAssembly System Interface module namespace.
-pub const WASI_MODULE: &str = "wasi_snapshot_preview1";
+use crate::{DecodeError, ExportEntry, ExportKind, ImportEntry, Result, WASI_MODULE};
 
 const ALLOWED_WASI_FUNCS: &[&str] = &["fd_write", "proc_exit"];
+
+/// WebAssembly proposals and features that are active during
+/// validation and parsing of WebAssembly binaries.
+fn wasm_features() -> WasmFeatures {
+    let mut f = WasmFeatures::empty();
+    f.insert(WasmFeatures::MUTABLE_GLOBAL);
+    f
+}
 
 /// A validated WebAssembly module.
 #[derive(Debug, Clone)]
@@ -29,8 +34,8 @@ impl Module {
     /// Returns a [`DecodeError`] if the module is malformed, uses a feature outside the
     /// allowed subset, or imports anything other than the permitted WASI functions.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        validate_module(bytes)?;
-        decode_internal(bytes)
+        validate(bytes)?;
+        decode(bytes)
     }
 
     /// The validated module's raw WebAssembly bytes.
@@ -52,15 +57,7 @@ impl Module {
     }
 }
 
-/// WebAssembly proposals and features that are active during
-/// validation and parsing of WebAssembly binaries.
-fn wasm_features() -> WasmFeatures {
-    let mut f = WasmFeatures::empty();
-    f.insert(WasmFeatures::MUTABLE_GLOBAL);
-    f
-}
-
-fn validate_module(bytes: &[u8]) -> Result<()> {
+fn validate(bytes: &[u8]) -> Result<()> {
     let mut validator = Validator::new_with_features(wasm_features());
     for payload in Parser::new(0).parse_all(bytes) {
         let payload = payload.map_err(DecodeError::invalid_binary)?;
@@ -75,7 +72,7 @@ fn validate_module(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn decode_internal(bytes: &[u8]) -> Result<Module> {
+fn decode(bytes: &[u8]) -> Result<Module> {
     let mut imports = Vec::new();
     let mut exports = Vec::new();
 
@@ -91,7 +88,7 @@ fn decode_internal(bytes: &[u8]) -> Result<Module> {
             Payload::ExportSection(reader) => {
                 for item in reader {
                     let export = item.map_err(DecodeError::invalid_binary)?;
-                    if let Some(kind) = from_external_kind(export.kind) {
+                    if let Some(kind) = export_kind_from(export.kind) {
                         exports.push(ExportEntry {
                             name: export.name.to_string(),
                             kind,
@@ -130,7 +127,7 @@ fn add_import(import: Import<'_>, imports: &mut Vec<ImportEntry>) -> Result<()> 
     Ok(())
 }
 
-fn from_external_kind(kind: ExternalKind) -> Option<ExportKind> {
+fn export_kind_from(kind: ExternalKind) -> Option<ExportKind> {
     match kind {
         ExternalKind::Func => Some(ExportKind::Function),
         ExternalKind::Table => Some(ExportKind::Table),
