@@ -4,7 +4,7 @@ use wasmparser::{
     Payload, TypeRef, ValType,
 };
 
-use crate::{Entry, ExecuteError, OpCode, Result, Word, error as exec_error};
+use crate::{Entry, ExecuteError, OpCode, Result, Word};
 
 /// Bytes per WebAssembly memory page.
 pub(crate) const PAGE_SIZE: usize = 65536;
@@ -38,13 +38,15 @@ pub fn entry_parameters(module: &Module, entry: &Entry) -> Result<Vec<WordType>>
         .collect())
 }
 
+/// The [`OpCode`] of every operator in a defined function's body, indexed by
+/// program point.
 pub fn function_opcodes(module: &Module, func_index: u32) -> Result<Vec<OpCode>> {
     let image = Image::parse(module.bytes())?;
     let func = image
         .funcs
         .iter()
         .find(|f| f.func_index == func_index)
-        .ok_or_else(|| exec_error::inconsistent("no defined function for the requested index"))?;
+        .ok_or_else(|| ExecuteError::inconsistent("no defined function for the requested index"))?;
     func.ops.iter().map(operator_to_opcode).collect()
 }
 
@@ -58,7 +60,7 @@ pub fn function_constants(module: &Module, func_index: u32) -> Result<Vec<Option
         .funcs
         .iter()
         .find(|f| f.func_index == func_index)
-        .ok_or_else(|| exec_error::inconsistent("no defined function for the requested index"))?;
+        .ok_or_else(|| ExecuteError::inconsistent("no defined function for the requested index"))?;
     Ok(func.ops.iter().map(operator_constant).collect())
 }
 
@@ -70,6 +72,8 @@ fn operator_constant(op: &Operator) -> Option<u64> {
     }
 }
 
+/// Maps a WebAssembly instruction (i.e., a validated [Operator]) onto its
+/// corresponding [`OpCode`].
 fn operator_to_opcode(op: &Operator) -> Result<OpCode> {
     let opcode = match op {
         Operator::Unreachable => OpCode::Unreachable,
@@ -235,7 +239,7 @@ fn val_ty(ty: ValType) -> Result<ValTy> {
     match ty {
         ValType::I32 => Ok(ValTy::I32),
         ValType::I64 => Ok(ValTy::I64),
-        _ => Err(exec_error::inconsistent(
+        _ => Err(ExecuteError::inconsistent(
             "value type outside the integer subset",
         )),
     }
@@ -254,17 +258,18 @@ impl<'a> Image<'a> {
         let mut max_pages = None;
 
         for payload in Parser::new(0).parse_all(bytes) {
-            match payload.map_err(exec_error::malformed)? {
+            match payload.map_err(ExecuteError::malformed)? {
                 Payload::TypeSection(reader) => {
                     for rec in reader {
-                        for sub in rec.map_err(exec_error::malformed)?.types() {
+                        for sub in rec.map_err(ExecuteError::malformed)?.types() {
                             types.push(fn_type(&sub.composite_type.inner)?);
                         }
                     }
                 }
                 Payload::ImportSection(reader) => {
                     for group in reader {
-                        if let Imports::Single(_, import) = group.map_err(exec_error::malformed)?
+                        if let Imports::Single(_, import) =
+                            group.map_err(ExecuteError::malformed)?
                             && let TypeRef::Func(type_idx) | TypeRef::FuncExact(type_idx) =
                                 import.ty
                         {
@@ -274,24 +279,24 @@ impl<'a> Image<'a> {
                                 name: import.name.into(),
                             });
                             num_imported = num_imported.checked_add(1).ok_or_else(|| {
-                                exec_error::inconsistent("too many imported functions")
+                                ExecuteError::inconsistent("too many imported functions")
                             })?;
                         }
                     }
                 }
                 Payload::FunctionSection(reader) => {
                     for type_idx in reader {
-                        func_types.push(type_idx.map_err(exec_error::malformed)?);
+                        func_types.push(type_idx.map_err(ExecuteError::malformed)?);
                     }
                 }
                 Payload::MemorySection(reader) => {
                     for mem in reader {
-                        let mem = mem.map_err(exec_error::malformed)?;
+                        let mem = mem.map_err(ExecuteError::malformed)?;
                         let bytes = usize::try_from(mem.initial)
                             .ok()
                             .and_then(|pages| pages.checked_mul(PAGE_SIZE))
                             .ok_or_else(|| {
-                                exec_error::inconsistent("initial memory size overflows")
+                                ExecuteError::inconsistent("initial memory size overflows")
                             })?;
                         memory = vec![0u8; bytes];
                         max_pages = mem.maximum;
@@ -300,13 +305,13 @@ impl<'a> Image<'a> {
                 Payload::GlobalSection(reader) => {
                     for global in reader {
                         globals.push(eval_const(
-                            &global.map_err(exec_error::malformed)?.init_expr,
+                            &global.map_err(ExecuteError::malformed)?.init_expr,
                         )?);
                     }
                 }
                 Payload::ExportSection(reader) => {
                     for export in reader {
-                        let export = export.map_err(exec_error::malformed)?;
+                        let export = export.map_err(ExecuteError::malformed)?;
                         if matches!(export.kind, wasmparser::ExternalKind::Func) {
                             func_exports.push((export.name.into(), export.index));
                         }
@@ -314,12 +319,12 @@ impl<'a> Image<'a> {
                 }
                 Payload::DataSection(reader) => {
                     for data in reader {
-                        let data = data.map_err(exec_error::malformed)?;
+                        let data = data.map_err(ExecuteError::malformed)?;
                         if let DataKind::Active { offset_expr, .. } = data.kind {
                             let offset = match eval_const(&offset_expr)? {
                                 Word::I32(v) => v as usize,
                                 Word::I64(v) => usize::try_from(v).map_err(|_| {
-                                    exec_error::inconsistent("data offset overflows")
+                                    ExecuteError::inconsistent("data offset overflows")
                                 })?,
                             };
                             let end = offset
@@ -334,7 +339,7 @@ impl<'a> Image<'a> {
                     let index = u32::try_from(funcs.len())
                         .ok()
                         .and_then(|i| num_imported.checked_add(i))
-                        .ok_or_else(|| exec_error::inconsistent("too many functions"))?;
+                        .ok_or_else(|| ExecuteError::inconsistent("too many functions"))?;
                     funcs.push(func_image(index, &func_types, &body)?);
                 }
                 _ => {}
@@ -369,11 +374,12 @@ impl<'a> Image<'a> {
             BlockType::Type(_) => Ok((0, 1)),
             BlockType::FuncType(idx) => {
                 let ty = self.types.get(*idx as usize).ok_or_else(|| {
-                    exec_error::inconsistent("block references an undeclared type")
+                    ExecuteError::inconsistent("block references an undeclared type")
                 })?;
                 Ok((
-                    u32::try_from(ty.params.len())
-                        .map_err(|_| exec_error::inconsistent("block parameter count overflows"))?,
+                    u32::try_from(ty.params.len()).map_err(|_| {
+                        ExecuteError::inconsistent("block parameter count overflows")
+                    })?,
                     ty.results,
                 ))
             }
@@ -391,7 +397,7 @@ fn fn_type(inner: &CompositeInnerType) -> Result<FnType> {
                 .map(val_ty)
                 .collect::<Result<_>>()?,
             results: u32::try_from(ft.results().len())
-                .map_err(|_| exec_error::inconsistent("result count overflows"))?,
+                .map_err(|_| ExecuteError::inconsistent("result count overflows"))?,
         }),
         _ => Ok(FnType {
             params: Vec::new(),
@@ -407,14 +413,14 @@ fn func_image<'a>(
 ) -> Result<FuncImage<'a>> {
     let type_idx = *func_types
         .get(index as usize)
-        .ok_or_else(|| exec_error::inconsistent("function references an undeclared type"))?;
+        .ok_or_else(|| ExecuteError::inconsistent("function references an undeclared type"))?;
 
     let declared = body
         .get_locals_reader()
-        .map_err(exec_error::malformed)?
+        .map_err(ExecuteError::malformed)?
         .into_iter()
         .map(|local| {
-            let (count, ty) = local.map_err(exec_error::malformed)?;
+            let (count, ty) = local.map_err(ExecuteError::malformed)?;
             Ok((0..count).map(move |_| val_ty(ty)))
         })
         .collect::<Result<Vec<_>>>()?
@@ -422,10 +428,12 @@ fn func_image<'a>(
         .flatten()
         .collect::<Result<Vec<ValTy>>>()?;
 
-    let mut reader = body.get_operators_reader().map_err(exec_error::malformed)?;
+    let mut reader = body
+        .get_operators_reader()
+        .map_err(ExecuteError::malformed)?;
     let mut ops = Vec::new();
     while !reader.eof() {
-        ops.push(reader.read().map_err(exec_error::malformed)?);
+        ops.push(reader.read().map_err(ExecuteError::malformed)?);
     }
 
     let ends = block_ends(&ops)?;
@@ -449,7 +457,7 @@ fn block_ends(ops: &[Operator]) -> Result<Vec<u32>> {
             Operator::End => {
                 if let Some(start) = open.pop() {
                     ends[start] = u32::try_from(pc)
-                        .map_err(|_| exec_error::inconsistent("function body too large"))?;
+                        .map_err(|_| ExecuteError::inconsistent("function body too large"))?;
                 }
             }
             _ => {}
@@ -458,12 +466,18 @@ fn block_ends(ops: &[Operator]) -> Result<Vec<u32>> {
     Ok(ends)
 }
 
+/// Evaluates a constant initializer expression to a single value. Ananse's subset
+/// admits only `i32.const` / `i64.const` initializers.
 fn eval_const(expr: &ConstExpr) -> Result<Word> {
     let mut reader = expr.get_operators_reader();
-    let value = match reader.read().map_err(exec_error::malformed)? {
+    let value = match reader.read().map_err(ExecuteError::malformed)? {
         Operator::I32Const { value } => Word::I32(value as u32),
         Operator::I64Const { value } => Word::I64(value as u64),
-        _ => return Err(exec_error::inconsistent("unsupported constant initializer")),
+        _ => {
+            return Err(ExecuteError::inconsistent(
+                "unsupported constant initializer",
+            ));
+        }
     };
     Ok(value)
 }
