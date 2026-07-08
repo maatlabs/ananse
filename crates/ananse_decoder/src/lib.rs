@@ -7,9 +7,11 @@ extern crate alloc;
 
 mod error;
 mod module;
+mod opcode;
 
 pub use error::DecodeError;
 pub use module::{ExportEntry, ExportKind, ImportEntry, Module, WASI_MODULE};
+pub use opcode::OpCode;
 
 /// Result of WASM module decode/validate operations.
 pub type Result<T> = core::result::Result<T, DecodeError>;

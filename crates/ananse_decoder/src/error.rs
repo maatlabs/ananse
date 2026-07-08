@@ -24,6 +24,15 @@ pub enum DecodeError {
         message: String,
     },
 
+    /// An operator not found in [wasmparser::Operator] enum was reached.
+    #[error("unsupported operator at offset {offset}: {operator}")]
+    UnsupportedOperator {
+        /// Byte offset of the rejected operator.
+        offset: usize,
+        /// Which operator was rejected.
+        operator: String,
+    },
+
     /// An import references a WASM module other than `wasi_snapshot_preview1`.
     #[error("import module `{module}` is not permitted (only `wasi_snapshot_preview1` is allowed)")]
     ForbiddenImportModule {
