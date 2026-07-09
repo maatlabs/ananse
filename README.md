@@ -83,9 +83,9 @@ cargo test --all-features --all-targets --workspace
 
 The zkVM is a workspace of focused crates, each with its own README. A module flows left to right: decoded and validated, lifted to the static register schedule, executed to a record stream, and materialized into the trace the register-shaped AIR constrains.
 
-### Crate Organization
+### Repository Structure
 
-| Crate               | Description                                                        |
+| Directory           | Description                                                        |
 | ------------------- | ------------------------------------------------------------------ |
 | [`ananse`]          | CLI + umbrella library (Runtime facade, prelude)                   |
 | [`ananse_decoder`]  | `wasmparser`-backed validator + integer-subset rejection rules     |
