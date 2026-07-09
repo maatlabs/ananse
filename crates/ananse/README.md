@@ -55,4 +55,4 @@ assert_eq!(execution.returns, vec![Word::I32(42)]);
 
 ## Repository
 
-[github.com/maatlabs/ananse](https://github.com/maatlabs/ananse). See the [project README](https://github.com/maatlabs/ananse/blob/main/README.md) for the architecture and the full crate layout.
+[github.com/maatlabs/ananse](https://github.com/maatlabs/ananse). See the [project README](https://github.com/maatlabs/ananse/blob/main/README.md) for an overview of the full zkVM architecture.
