@@ -1,4 +1,4 @@
-use ananse_decoder::{Image, Module, OpCode, WASM_PAGE_SIZE, Word};
+use ananse_decoder::{Image, Module, OpCode, WASM32_PAGE_SIZE, Word};
 use ananse_lift::{LiftedFunction, LiftedProgram, Register, Successors, lift};
 use wasmparser::Operator;
 
@@ -670,18 +670,18 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
     }
 
     fn size(&self, stack: &mut Vec<Word>, pc: usize) -> Outcome {
-        stack.push(Word::I32((self.memory.len() / WASM_PAGE_SIZE) as u32));
+        stack.push(Word::I32((self.memory.len() / WASM32_PAGE_SIZE) as u32));
         Outcome::advance(OpCode::MemorySize, pc + 1)
     }
 
     fn grow(&mut self, stack: &mut Vec<Word>, pc: usize) -> Result<Outcome> {
         let delta = pop_u32(stack)? as usize;
-        let old_pages = self.memory.len() / WASM_PAGE_SIZE;
+        let old_pages = self.memory.len() / WASM32_PAGE_SIZE;
         let grown = old_pages
             .checked_add(delta)
-            .filter(|&n| n <= WASM_PAGE_SIZE)
+            .filter(|&n| n <= WASM32_PAGE_SIZE)
             .filter(|&n| self.max_pages.is_none_or(|m| n as u64 <= m))
-            .and_then(|n| n.checked_mul(WASM_PAGE_SIZE).map(|bytes| (n, bytes)));
+            .and_then(|n| n.checked_mul(WASM32_PAGE_SIZE).map(|bytes| (n, bytes)));
         let result = match grown {
             Some((_, bytes)) => {
                 self.memory.resize(bytes, 0);

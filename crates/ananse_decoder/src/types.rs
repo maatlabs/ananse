@@ -4,7 +4,7 @@ use wasmparser::{
     Payload, TypeRef, ValType,
 };
 
-use crate::{DecodeError, Result, WASM_PAGE_SIZE};
+use crate::{DecodeError, Result, WASM32_PAGE_SIZE};
 
 /// A WebAssembly integer value, held as its unsigned bit pattern.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -263,7 +263,7 @@ impl<'a> Image<'a> {
                         let mem = mem.map_err(DecodeError::invalid_binary)?;
                         let bytes = usize::try_from(mem.initial)
                             .ok()
-                            .and_then(|pages| pages.checked_mul(WASM_PAGE_SIZE))
+                            .and_then(|pages| pages.checked_mul(WASM32_PAGE_SIZE))
                             .ok_or_else(|| {
                                 DecodeError::internal("initial memory size overflows")
                             })?;
