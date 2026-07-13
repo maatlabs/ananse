@@ -25,8 +25,8 @@ pub const WASM32_PAGE_SIZE: usize = 65536;
 /// The supported WebAssembly System Interface module namespace.
 pub const WASI_MODULE: &str = "wasi_snapshot_preview1";
 
-/// The [`OpCode`] of every operator in a defined function's body, indexed by
-/// program point.
+/// Returns the corresponding [`OpCode`] of every instruction (i.e., a validated [Operator]) in the
+/// body of a defined function with index `func_index`.
 pub fn function_opcodes(module: &Module, func_index: u32) -> Result<Vec<OpCode>> {
     let image = Image::parse(module.bytes())?;
     let func = image

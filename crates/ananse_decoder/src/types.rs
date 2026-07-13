@@ -33,8 +33,8 @@ impl Word {
     /// This value's little-endian 32-bit limbs `(lo, hi)` as Goldilocks
     /// residues, with the value equal to `lo + hi * 2^32`.
     ///
-    /// An `i32` occupies the low limb alone (`hi` is zero);
-    /// an `i64` splits across both.
+    /// An `i32` occupies the low limb alone (`hi` is zero); an
+    /// `i64` splits across both.
     pub fn to_limbs(self) -> (Felt, Felt) {
         let bits = match self {
             Self::I32(bits) => u64::from(bits),
