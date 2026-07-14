@@ -1,6 +1,6 @@
 use ananse_air::{AnanseAir, pack_edge, program_rom};
-use ananse_decoder::Module;
-use ananse_executor::{Entry, OpCode, Transition, Word, execute, function_opcodes};
+use ananse_decoder::{Module, OpCode, Word, function_opcodes};
+use ananse_executor::{Entry, Transition, execute};
 use ananse_lift::{Register, lift};
 use ananse_tests::{
     SINGLE_FRAME_FIXTURES, air_for, failing_rows, main_matrix, mock_challenges, permutation_of,

@@ -1,6 +1,6 @@
 [package]
 name = "ananse_decoder"
-description = "WebAssembly module decoder and validator for the Ananse zkVM"
+description = "WebAssembly (WASM) module decoder and validator for the Ananse zkVM"
 keywords = ["wasm", "zero-knowledge", "zk", "zkvm", "decoder"]
 categories = ["compilers", "cryptography", "wasm"]
 version.workspace = true
@@ -17,5 +17,6 @@ std = ["thiserror/std", "wasmparser/std"]
 alloc = []
 
 [dependencies]
+p3-goldilocks = { workspace = true }
 thiserror = { workspace = true }
 wasmparser = { workspace = true }

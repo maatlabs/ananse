@@ -1,5 +1,5 @@
-use ananse_decoder::Module;
-use ananse_executor::{Entry, NoHost, OpCode, Transition, Word, execute};
+use ananse_decoder::{Module, OpCode, Word};
+use ananse_executor::{Entry, NoHost, Transition, execute};
 use ananse_lift::lift;
 use ananse_tests::{
     SINGLE_FRAME_FIXTURES, trace_of, wat_from_example, wat_from_fixture, wat_from_str,

@@ -5,8 +5,7 @@ use std::path::Path;
 use std::process;
 use std::time::Instant;
 
-use ananse::decoder::ExportKind;
-use ananse::executor::WordType;
+use ananse::decoder::{ExportKind, WordType};
 use ananse::prelude::*;
 
 /// Prints an `error: ...` line and exits the process with a non-zero status.

@@ -1,32 +1,17 @@
-use ananse_decoder::Module;
+use ananse_decoder::{Image, Module, OpCode, WASM32_PAGE_SIZE, Word};
 use ananse_lift::{LiftedFunction, LiftedProgram, Register, Successors, lift};
 use wasmparser::Operator;
 
-use crate::image::{Image, PAGE_SIZE};
-use crate::value::{Arith, Compare, Unary, Word, arith, compare, unary};
+use crate::record::{Control, Flow, Outcome, RtFrame};
+use crate::value::{Arithmetic, Compare, Unary, arithmetic, compare, unary};
 use crate::{
-    ExecuteError, Host, HostAction, MemAccess, OpCode, RegAccess, Result, StepObserver, StepRecord,
-    Transition, Trap, error as exec_error,
+    Entry, ExecuteError, Host, HostAction, MemAccess, RegAccess, Result, StepObserver, StepRecord,
+    Transition, Trap,
 };
 
 /// Maximum direct-call nesting before the executor reports
 /// [`Trap::CallStackExhausted`], bounding host stack use.
 const MAX_CALL_DEPTH: usize = 1024;
-
-/// Largest addressable size of a 32-bit linear memory, in pages.
-const WASM32_MAX_PAGES: usize = 65536;
-
-/// Where execution begins.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Entry {
-    /// Run the exported `_start`, else the first exported function, else the
-    /// first defined function; a module with no defined function runs nothing.
-    Auto,
-    /// Run the function at this index in the module function index space.
-    Function(u32),
-    /// Run the function exported under this name.
-    Export(String),
-}
 
 /// The outcome of an execution.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +25,16 @@ pub struct Execution {
 }
 
 /// Executes a validated module under its static register schedule.
+///
+/// The module is lifted to its register schedule and parsed into an executable
+/// image, then interpreted: every operator's register touches are resolved
+/// against the live operand stack, locals, and globals and emitted as a
+/// [`StepRecord`]. At each program point the operand-stack height execution
+/// reaches is checked against the height the schedule predicts; a disagreement
+/// is reported as [`ExecuteError::ScheduleMismatch`].
+///
+/// The record stream is a deterministic function of the
+/// `(module, entry, args, host)` inputs.
 pub fn execute<O: StepObserver, H: Host>(
     module: &Module,
     entry: &Entry,
@@ -50,7 +45,7 @@ pub fn execute<O: StepObserver, H: Host>(
     let program = lift(module)?;
     let image = Image::parse(module.bytes())?;
 
-    let Some(func_index) = resolve_entry(&image, entry)? else {
+    let Some(func_index) = entry.resolve(&image)? else {
         return Ok(Execution {
             returns: Vec::new(),
             exit: None,
@@ -91,25 +86,6 @@ pub fn execute<O: StepObserver, H: Host>(
     })
 }
 
-pub(crate) fn resolve_entry(image: &Image, entry: &Entry) -> Result<Option<u32>> {
-    match entry {
-        Entry::Function(idx) => Ok(Some(*idx)),
-        Entry::Export(name) => image
-            .func_exports
-            .iter()
-            .find(|(export, _)| export == name)
-            .map(|(_, idx)| Some(*idx))
-            .ok_or(ExecuteError::UndefinedEntry),
-        Entry::Auto => Ok(image
-            .func_exports
-            .iter()
-            .find(|(name, _)| name == "_start")
-            .or_else(|| image.func_exports.first())
-            .map(|(_, idx)| *idx)
-            .or_else(|| (!image.funcs.is_empty()).then_some(image.num_imported))),
-    }
-}
-
 fn entry_args(image: &Image, func_index: u32, params: u32, args: &[Word]) -> Result<Vec<Word>> {
     if args.is_empty() && params > 0 {
         let ty = &image.types[image.func_types[func_index as usize] as usize];
@@ -122,46 +98,6 @@ fn entry_args(image: &Image, func_index: u32, params: u32, args: &[Word]) -> Res
         });
     }
     Ok(args.to_vec())
-}
-
-/// A runtime control frame, tracked only for the data a branch needs: the values
-/// it carries and where it lands.
-struct RtFrame {
-    is_loop: bool,
-    branch_arity: u32,
-    end_pc: u32,
-}
-
-/// What a function activation produced.
-enum Flow {
-    Return(Vec<Word>),
-    Exit(i32),
-}
-
-/// What executing a single operator produced.
-enum Control {
-    Advance(usize),
-    Return(Vec<Word>),
-    Exit(i32),
-}
-
-/// The record-bearing result of executing one operator.
-struct Outcome {
-    opcode: OpCode,
-    transition: Transition,
-    mem: Vec<MemAccess>,
-    control: Control,
-}
-
-impl Outcome {
-    fn advance(opcode: OpCode, next: usize) -> Self {
-        Outcome {
-            opcode,
-            transition: Transition::Next(next as u32),
-            mem: Vec::new(),
-            control: Control::Advance(next),
-        }
-    }
 }
 
 /// The mutable execution state: module-wide globals and linear memory, the
@@ -243,7 +179,9 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                         end_pc: func.ends[pc],
                     });
                     let Successors::Branch { taken, not_taken } = sched.successors else {
-                        return Err(exec_error::inconsistent("`if` without a branch successor"));
+                        return Err(ExecuteError::invalid_binary(
+                            "`if` without a branch successor",
+                        ));
                     };
                     let next = if cond.is_true() { taken } else { not_taken } as usize;
                     reconcile(&mut frames, next);
@@ -251,7 +189,9 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                 }
                 Operator::Else => {
                     let Successors::Jump(target) = sched.successors else {
-                        return Err(exec_error::inconsistent("`else` without a jump successor"));
+                        return Err(ExecuteError::invalid_binary(
+                            "`else` without a jump successor",
+                        ));
                     };
                     reconcile(&mut frames, target as usize);
                     Outcome::advance(OpCode::Else, target as usize)
@@ -274,7 +214,9 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
 
                 Operator::Br { relative_depth } => {
                     let Successors::Jump(target) = sched.successors else {
-                        return Err(exec_error::inconsistent("`br` without a jump successor"));
+                        return Err(ExecuteError::invalid_binary(
+                            "`br` without a jump successor",
+                        ));
                     };
                     let control = branch_to(
                         &mut stack,
@@ -294,7 +236,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                 Operator::BrIf { relative_depth } => {
                     let cond = pop(&mut stack)?;
                     let Successors::Branch { taken, not_taken } = sched.successors else {
-                        return Err(exec_error::inconsistent(
+                        return Err(ExecuteError::invalid_binary(
                             "`br_if` without a branch successor",
                         ));
                     };
@@ -325,14 +267,14 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                         default,
                     } = &sched.successors
                     else {
-                        return Err(exec_error::inconsistent(
+                        return Err(ExecuteError::invalid_binary(
                             "`br_table` without a table successor",
                         ));
                     };
                     let depths = targets
                         .targets()
                         .collect::<core::result::Result<Vec<u32>, _>>()
-                        .map_err(|e| exec_error::inconsistent(&e.to_string()))?;
+                        .map_err(|e| ExecuteError::invalid_binary(&e.to_string()))?;
                     let (depth_to, target) = if selector < depths.len() {
                         (depths[selector], target_pcs[selector])
                     } else {
@@ -360,7 +302,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                 Operator::Call { function_index } => {
                     let f = *function_index;
                     let (params, _) = image.func_arity(f).ok_or_else(|| {
-                        exec_error::inconsistent("call to an undeclared function")
+                        ExecuteError::invalid_binary("call to an undeclared function")
                     })?;
                     let call_args = take_top(&mut stack, params)?;
                     if f < image.num_imported {
@@ -423,33 +365,31 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                 Operator::LocalGet { local_index } => {
                     let value = *locals
                         .get(*local_index as usize)
-                        .ok_or_else(|| exec_error::inconsistent("local index out of range"))?;
+                        .ok_or_else(|| ExecuteError::invalid_binary("local index out of range"))?;
                     stack.push(value);
                     Outcome::advance(OpCode::LocalGet, pc + 1)
                 }
                 Operator::LocalSet { local_index } => {
                     let value = pop(&mut stack)?;
-                    *locals
-                        .get_mut(*local_index as usize)
-                        .ok_or_else(|| exec_error::inconsistent("local index out of range"))? =
-                        value;
+                    *locals.get_mut(*local_index as usize).ok_or_else(|| {
+                        ExecuteError::invalid_binary("local index out of range")
+                    })? = value;
                     Outcome::advance(OpCode::LocalSet, pc + 1)
                 }
                 Operator::LocalTee { local_index } => {
                     let value = *stack
                         .last()
-                        .ok_or_else(|| exec_error::inconsistent("operand stack underflow"))?;
-                    *locals
-                        .get_mut(*local_index as usize)
-                        .ok_or_else(|| exec_error::inconsistent("local index out of range"))? =
-                        value;
+                        .ok_or_else(|| ExecuteError::invalid_binary("operand stack underflow"))?;
+                    *locals.get_mut(*local_index as usize).ok_or_else(|| {
+                        ExecuteError::invalid_binary("local index out of range")
+                    })? = value;
                     Outcome::advance(OpCode::LocalTee, pc + 1)
                 }
                 Operator::GlobalGet { global_index } => {
                     let value = *self
                         .globals
                         .get(*global_index as usize)
-                        .ok_or_else(|| exec_error::inconsistent("global index out of range"))?;
+                        .ok_or_else(|| ExecuteError::invalid_binary("global index out of range"))?;
                     stack.push(value);
                     Outcome::advance(OpCode::GlobalGet, pc + 1)
                 }
@@ -458,8 +398,9 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     *self
                         .globals
                         .get_mut(*global_index as usize)
-                        .ok_or_else(|| exec_error::inconsistent("global index out of range"))? =
-                        value;
+                        .ok_or_else(|| {
+                            ExecuteError::invalid_binary("global index out of range")
+                        })? = value;
                     Outcome::advance(OpCode::GlobalSet, pc + 1)
                 }
 
@@ -543,36 +484,36 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                 Operator::I64Ctz => unop(&mut stack, Unary::Ctz, OpCode::I64Ctz, pc)?,
                 Operator::I64Popcnt => unop(&mut stack, Unary::Popcnt, OpCode::I64Popcnt, pc)?,
 
-                Operator::I32Add => binop(&mut stack, Arith::Add, OpCode::I32Add, pc)?,
-                Operator::I32Sub => binop(&mut stack, Arith::Sub, OpCode::I32Sub, pc)?,
-                Operator::I32Mul => binop(&mut stack, Arith::Mul, OpCode::I32Mul, pc)?,
-                Operator::I32DivS => binop(&mut stack, Arith::DivS, OpCode::I32DivS, pc)?,
-                Operator::I32DivU => binop(&mut stack, Arith::DivU, OpCode::I32DivU, pc)?,
-                Operator::I32RemS => binop(&mut stack, Arith::RemS, OpCode::I32RemS, pc)?,
-                Operator::I32RemU => binop(&mut stack, Arith::RemU, OpCode::I32RemU, pc)?,
-                Operator::I32And => binop(&mut stack, Arith::And, OpCode::I32And, pc)?,
-                Operator::I32Or => binop(&mut stack, Arith::Or, OpCode::I32Or, pc)?,
-                Operator::I32Xor => binop(&mut stack, Arith::Xor, OpCode::I32Xor, pc)?,
-                Operator::I32Shl => binop(&mut stack, Arith::Shl, OpCode::I32Shl, pc)?,
-                Operator::I32ShrS => binop(&mut stack, Arith::ShrS, OpCode::I32ShrS, pc)?,
-                Operator::I32ShrU => binop(&mut stack, Arith::ShrU, OpCode::I32ShrU, pc)?,
-                Operator::I32Rotl => binop(&mut stack, Arith::Rotl, OpCode::I32Rotl, pc)?,
-                Operator::I32Rotr => binop(&mut stack, Arith::Rotr, OpCode::I32Rotr, pc)?,
-                Operator::I64Add => binop(&mut stack, Arith::Add, OpCode::I64Add, pc)?,
-                Operator::I64Sub => binop(&mut stack, Arith::Sub, OpCode::I64Sub, pc)?,
-                Operator::I64Mul => binop(&mut stack, Arith::Mul, OpCode::I64Mul, pc)?,
-                Operator::I64DivS => binop(&mut stack, Arith::DivS, OpCode::I64DivS, pc)?,
-                Operator::I64DivU => binop(&mut stack, Arith::DivU, OpCode::I64DivU, pc)?,
-                Operator::I64RemS => binop(&mut stack, Arith::RemS, OpCode::I64RemS, pc)?,
-                Operator::I64RemU => binop(&mut stack, Arith::RemU, OpCode::I64RemU, pc)?,
-                Operator::I64And => binop(&mut stack, Arith::And, OpCode::I64And, pc)?,
-                Operator::I64Or => binop(&mut stack, Arith::Or, OpCode::I64Or, pc)?,
-                Operator::I64Xor => binop(&mut stack, Arith::Xor, OpCode::I64Xor, pc)?,
-                Operator::I64Shl => binop(&mut stack, Arith::Shl, OpCode::I64Shl, pc)?,
-                Operator::I64ShrS => binop(&mut stack, Arith::ShrS, OpCode::I64ShrS, pc)?,
-                Operator::I64ShrU => binop(&mut stack, Arith::ShrU, OpCode::I64ShrU, pc)?,
-                Operator::I64Rotl => binop(&mut stack, Arith::Rotl, OpCode::I64Rotl, pc)?,
-                Operator::I64Rotr => binop(&mut stack, Arith::Rotr, OpCode::I64Rotr, pc)?,
+                Operator::I32Add => binop(&mut stack, Arithmetic::Add, OpCode::I32Add, pc)?,
+                Operator::I32Sub => binop(&mut stack, Arithmetic::Sub, OpCode::I32Sub, pc)?,
+                Operator::I32Mul => binop(&mut stack, Arithmetic::Mul, OpCode::I32Mul, pc)?,
+                Operator::I32DivS => binop(&mut stack, Arithmetic::DivS, OpCode::I32DivS, pc)?,
+                Operator::I32DivU => binop(&mut stack, Arithmetic::DivU, OpCode::I32DivU, pc)?,
+                Operator::I32RemS => binop(&mut stack, Arithmetic::RemS, OpCode::I32RemS, pc)?,
+                Operator::I32RemU => binop(&mut stack, Arithmetic::RemU, OpCode::I32RemU, pc)?,
+                Operator::I32And => binop(&mut stack, Arithmetic::And, OpCode::I32And, pc)?,
+                Operator::I32Or => binop(&mut stack, Arithmetic::Or, OpCode::I32Or, pc)?,
+                Operator::I32Xor => binop(&mut stack, Arithmetic::Xor, OpCode::I32Xor, pc)?,
+                Operator::I32Shl => binop(&mut stack, Arithmetic::Shl, OpCode::I32Shl, pc)?,
+                Operator::I32ShrS => binop(&mut stack, Arithmetic::ShrS, OpCode::I32ShrS, pc)?,
+                Operator::I32ShrU => binop(&mut stack, Arithmetic::ShrU, OpCode::I32ShrU, pc)?,
+                Operator::I32Rotl => binop(&mut stack, Arithmetic::Rotl, OpCode::I32Rotl, pc)?,
+                Operator::I32Rotr => binop(&mut stack, Arithmetic::Rotr, OpCode::I32Rotr, pc)?,
+                Operator::I64Add => binop(&mut stack, Arithmetic::Add, OpCode::I64Add, pc)?,
+                Operator::I64Sub => binop(&mut stack, Arithmetic::Sub, OpCode::I64Sub, pc)?,
+                Operator::I64Mul => binop(&mut stack, Arithmetic::Mul, OpCode::I64Mul, pc)?,
+                Operator::I64DivS => binop(&mut stack, Arithmetic::DivS, OpCode::I64DivS, pc)?,
+                Operator::I64DivU => binop(&mut stack, Arithmetic::DivU, OpCode::I64DivU, pc)?,
+                Operator::I64RemS => binop(&mut stack, Arithmetic::RemS, OpCode::I64RemS, pc)?,
+                Operator::I64RemU => binop(&mut stack, Arithmetic::RemU, OpCode::I64RemU, pc)?,
+                Operator::I64And => binop(&mut stack, Arithmetic::And, OpCode::I64And, pc)?,
+                Operator::I64Or => binop(&mut stack, Arithmetic::Or, OpCode::I64Or, pc)?,
+                Operator::I64Xor => binop(&mut stack, Arithmetic::Xor, OpCode::I64Xor, pc)?,
+                Operator::I64Shl => binop(&mut stack, Arithmetic::Shl, OpCode::I64Shl, pc)?,
+                Operator::I64ShrS => binop(&mut stack, Arithmetic::ShrS, OpCode::I64ShrS, pc)?,
+                Operator::I64ShrU => binop(&mut stack, Arithmetic::ShrU, OpCode::I64ShrU, pc)?,
+                Operator::I64Rotl => binop(&mut stack, Arithmetic::Rotl, OpCode::I64Rotl, pc)?,
+                Operator::I64Rotr => binop(&mut stack, Arithmetic::Rotr, OpCode::I64Rotr, pc)?,
 
                 Operator::I32Eq => cmpop(&mut stack, Compare::Eq, OpCode::I32Eq, pc)?,
                 Operator::I32Ne => cmpop(&mut stack, Compare::Ne, OpCode::I32Ne, pc)?,
@@ -729,18 +670,18 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
     }
 
     fn size(&self, stack: &mut Vec<Word>, pc: usize) -> Outcome {
-        stack.push(Word::I32((self.memory.len() / PAGE_SIZE) as u32));
+        stack.push(Word::I32((self.memory.len() / WASM32_PAGE_SIZE) as u32));
         Outcome::advance(OpCode::MemorySize, pc + 1)
     }
 
     fn grow(&mut self, stack: &mut Vec<Word>, pc: usize) -> Result<Outcome> {
         let delta = pop_u32(stack)? as usize;
-        let old_pages = self.memory.len() / PAGE_SIZE;
+        let old_pages = self.memory.len() / WASM32_PAGE_SIZE;
         let grown = old_pages
             .checked_add(delta)
-            .filter(|&n| n <= WASM32_MAX_PAGES)
+            .filter(|&n| n <= WASM32_PAGE_SIZE)
             .filter(|&n| self.max_pages.is_none_or(|m| n as u64 <= m))
-            .and_then(|n| n.checked_mul(PAGE_SIZE).map(|bytes| (n, bytes)));
+            .and_then(|n| n.checked_mul(WASM32_PAGE_SIZE).map(|bytes| (n, bytes)));
         let result = match grown {
             Some((_, bytes)) => {
                 self.memory.resize(bytes, 0);
@@ -770,16 +711,16 @@ fn branch_to(
         .len()
         .checked_sub(1)
         .and_then(|top| top.checked_sub(relative_depth as usize))
-        .ok_or_else(|| exec_error::inconsistent("branch depth exceeds the control stack"))?;
+        .ok_or_else(|| ExecuteError::invalid_binary("branch depth exceeds the control stack"))?;
     let frame = frames
         .get(target_idx)
-        .ok_or_else(|| exec_error::inconsistent("branch target frame is missing"))?;
+        .ok_or_else(|| ExecuteError::invalid_binary("branch target frame is missing"))?;
     let (arity, is_loop) = (frame.branch_arity as usize, frame.is_loop);
     let target_height = lf
         .instrs
         .get(target as usize)
         .map(|instr| instr.height_in as usize)
-        .ok_or_else(|| exec_error::inconsistent("branch target out of range"))?;
+        .ok_or_else(|| ExecuteError::invalid_binary("branch target out of range"))?;
     unwind_stack(stack, target_height, arity)?;
     frames.truncate(if is_loop { target_idx + 1 } else { target_idx });
     Ok(Control::Advance(target as usize))
@@ -788,11 +729,11 @@ fn branch_to(
 fn unwind_stack(stack: &mut Vec<Word>, target_height: usize, arity: usize) -> Result<()> {
     let keep = target_height
         .checked_sub(arity)
-        .ok_or_else(|| exec_error::inconsistent("branch arity exceeds the target height"))?;
+        .ok_or_else(|| ExecuteError::invalid_binary("branch arity exceeds the target height"))?;
     let from = stack
         .len()
         .checked_sub(arity)
-        .ok_or_else(|| exec_error::inconsistent("branch arity exceeds the stack height"))?;
+        .ok_or_else(|| ExecuteError::invalid_binary("branch arity exceeds the stack height"))?;
     let carried = stack.split_off(from);
     stack.truncate(keep);
     stack.extend(carried);
@@ -803,7 +744,7 @@ fn take_top(stack: &mut Vec<Word>, n: u32) -> Result<Vec<Word>> {
     let at = stack
         .len()
         .checked_sub(n as usize)
-        .ok_or_else(|| exec_error::inconsistent("arity exceeds the stack height"))?;
+        .ok_or_else(|| ExecuteError::invalid_binary("arity exceeds the stack height"))?;
     Ok(stack.split_off(at))
 }
 
@@ -827,7 +768,7 @@ fn transition_of(control: &Control) -> Transition {
 fn pop(stack: &mut Vec<Word>) -> Result<Word> {
     stack
         .pop()
-        .ok_or_else(|| exec_error::inconsistent("operand stack underflow"))
+        .ok_or_else(|| ExecuteError::invalid_binary("operand stack underflow"))
 }
 
 fn pop_u32(stack: &mut Vec<Word>) -> Result<u32> {
@@ -837,10 +778,10 @@ fn pop_u32(stack: &mut Vec<Word>) -> Result<u32> {
     })
 }
 
-fn binop(stack: &mut Vec<Word>, kind: Arith, opcode: OpCode, pc: usize) -> Result<Outcome> {
+fn binop(stack: &mut Vec<Word>, kind: Arithmetic, opcode: OpCode, pc: usize) -> Result<Outcome> {
     let rhs = pop(stack)?;
     let lhs = pop(stack)?;
-    stack.push(arith(kind, lhs, rhs)?);
+    stack.push(arithmetic(kind, lhs, rhs)?);
     Ok(Outcome::advance(opcode, pc + 1))
 }
 
@@ -911,5 +852,5 @@ fn read_reg(reg: Register, stack: &[Word], locals: &[Word], globals: &[Word]) ->
         Register::Global(g) => globals.get(g as usize).copied(),
         Register::Stack(d) => stack.get(d as usize).copied(),
     };
-    value.ok_or_else(|| exec_error::inconsistent("register access out of range"))
+    value.ok_or_else(|| ExecuteError::invalid_binary("register access out of range"))
 }

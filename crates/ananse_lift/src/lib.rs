@@ -28,10 +28,15 @@ use ananse_decoder::Module;
 pub use error::LiftError;
 pub use program::{InstructionSchedule, LiftedFunction, LiftedProgram, Register, Successors};
 
-/// Result alias for lift operations.
+/// Result of stack-to-register lift operations.
 pub type Result<T> = core::result::Result<T, LiftError>;
 
-/// Lifts a validated [`Module`] to its static register form.
+/// Lifts a [`Module`] to its static register form.
+///
+/// Returns one [`LiftedFunction`] per defined (non-imported) function, in
+/// code-section order. Because the module is already validated, an
+/// error indicates an internal inconsistency or a function outside the
+/// allowed subset of WASM instead of a malformed user input.
 pub fn lift(module: &Module) -> Result<LiftedProgram> {
     Ok(LiftedProgram {
         functions: analysis::lift_functions(module.bytes())?,

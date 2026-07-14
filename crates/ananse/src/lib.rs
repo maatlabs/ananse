@@ -24,11 +24,9 @@
 
 pub use ananse_air as air;
 pub use ananse_decoder as decoder;
-use ananse_decoder::{DecodeError, Module};
+use ananse_decoder::{DecodeError, Module, Word, WordType};
 pub use ananse_executor as executor;
-use ananse_executor::{
-    Entry, ExecuteError, Execution, Host, NoHost, Word, WordType, entry_parameters, execute,
-};
+use ananse_executor::{Entry, ExecuteError, Execution, Host, NoHost, execute};
 pub use ananse_lift as lift;
 pub use ananse_trace as trace;
 pub use ananse_wasi as wasi;
@@ -98,10 +96,10 @@ impl<H: Host> Runtime<H> {
         &self.host
     }
 
-    /// The parameter widths `entry` expects, in order --- the types a caller
+    /// The parameter widths `entry` expects, in order---the types a caller
     /// coerces its arguments to before [`call`](Self::call).
     pub fn parameters(&self, entry: &Entry) -> Result<Vec<WordType>> {
-        Ok(entry_parameters(&self.module, entry)?)
+        Ok(entry.params(&self.module)?)
     }
 
     /// Runs `entry` with `args` to completion, returning its results, exit
@@ -114,8 +112,8 @@ impl<H: Host> Runtime<H> {
 /// The items most callers need to decode, run, and inspect a module. Glob-import
 /// with `use ananse::prelude::*;`.
 pub mod prelude {
-    pub use crate::decoder::Module;
-    pub use crate::executor::{Entry, Execution, Word, WordType};
+    pub use crate::decoder::{Module, Word, WordType};
+    pub use crate::executor::{Entry, Execution};
     pub use crate::wasi::WasiSnapshotPreview1;
     pub use crate::{Error, Result, Runtime};
 }

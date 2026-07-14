@@ -2,34 +2,92 @@ use alloc::string::String;
 
 use wasmparser::BinaryReaderError;
 
-pub(crate) fn invalid_binary(e: BinaryReaderError) -> DecodeError {
-    DecodeError::InvalidBinary {
-        offset: e.offset(),
-        message: e.to_string(),
-    }
-}
-
-pub(crate) fn validation_failed(e: BinaryReaderError) -> DecodeError {
-    DecodeError::ValidationFailed {
-        offset: e.offset(),
-        message: e.to_string(),
-    }
-}
-
-/// An error produced while decoding or validating a WebAssembly module.
+/// An error produced while decoding or validating a WASM module.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DecodeError {
+    /// The byte stream is not a well-formed WASM binary.
     #[error("invalid WASM binary at offset {offset}: {message}")]
-    InvalidBinary { offset: usize, message: String },
+    InvalidBinary {
+        /// The byte offset at which the malformed input was detected.
+        offset: usize,
+        /// The underlying parser error message.
+        message: String,
+    },
 
+    /// The module is well-formed but fails validation under the allowed
+    /// WASM feature set.
     #[error("WASM module failed validation at offset {offset}: {message}")]
-    ValidationFailed { offset: usize, message: String },
+    ValidationFailed {
+        /// The byte offset at which validation failed.
+        offset: usize,
+        /// The underlying validation error message.
+        message: String,
+    },
 
+    /// An operator not found in [wasmparser::Operator] enum was reached.
+    #[error("unsupported operator at offset {offset}: {operator}")]
+    UnsupportedOperator {
+        /// Byte offset of the rejected operator.
+        offset: usize,
+        /// Which operator was rejected.
+        operator: String,
+    },
+
+    /// An import references a WASM module other than `wasi_snapshot_preview1`.
     #[error("import module `{module}` is not permitted (only `wasi_snapshot_preview1` is allowed)")]
-    ForbiddenImportModule { module: String },
+    ForbiddenImportModule {
+        /// The rejected import module namespace.
+        module: String,
+    },
 
+    /// An import references a WASI function outside the supported set.
     #[error(
         "WASI import `{module}::{name}` is not permitted (only `fd_write` and `proc_exit` are allowed)"
     )]
-    ForbiddenWasiImport { module: String, name: String },
+    ForbiddenWasiImport {
+        /// The rejected import module namespace.
+        module: String,
+        /// The rejected WASI function name.
+        name: String,
+    },
+
+    /// A load or store operation outside the bounds of linear memory.
+    #[error("out-of-bounds memory access")]
+    MemoryOutOfBounds,
+
+    /// A function body has more operators than can be indexed as program points.
+    #[error("function {func_index} has too many operators")]
+    FunctionTooLarge {
+        /// The offending function's index in the module function index space.
+        func_index: u32,
+    },
+}
+
+impl DecodeError {
+    /// Reports that the byte stream is not a well-formed WASM binary,
+    /// showing the actual offset and message.
+    pub fn invalid_binary(e: BinaryReaderError) -> Self {
+        Self::InvalidBinary {
+            offset: e.offset(),
+            message: e.to_string(),
+        }
+    }
+
+    /// Reports that the module is well-formed but fails validation under the
+    /// allowed WASM feature set.
+    pub fn validation_failed(e: BinaryReaderError) -> Self {
+        Self::ValidationFailed {
+            offset: e.offset(),
+            message: e.to_string(),
+        }
+    }
+
+    /// Reports that the byte stream is not a well-formed WASM binary,
+    /// from offset 0 and with a custom message.
+    pub(crate) fn internal(message: &str) -> Self {
+        Self::InvalidBinary {
+            offset: 0,
+            message: message.into(),
+        }
+    }
 }
