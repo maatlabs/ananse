@@ -17,4 +17,3 @@ ananse_lift = { workspace = true }
 
 p3-goldilocks = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
-wasmparser = { workspace = true }

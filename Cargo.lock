@@ -48,7 +48,6 @@ dependencies = [
  "ananse_lift",
  "p3-goldilocks",
  "thiserror",
- "wasmparser",
 ]
 
 [[package]]

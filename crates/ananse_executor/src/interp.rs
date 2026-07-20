@@ -1,6 +1,5 @@
-use ananse_decoder::{Image, Module, OpCode, WASM32_PAGE_SIZE, Word};
+use ananse_decoder::{Image, Instruction, Module, OpCode, WASM32_PAGE_SIZE, Word};
 use ananse_lift::{LiftedFunction, LiftedProgram, Register, Successors, lift};
-use wasmparser::Operator;
 
 use crate::record::{Control, Flow, Outcome, RtFrame};
 use crate::value::{Arithmetic, Compare, Unary, arithmetic, compare, unary};
@@ -136,7 +135,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
         let mut pc = 0usize;
 
         loop {
-            let op = &func.ops[pc];
+            let op = &func.instructions[pc];
             let sched = &lf.instrs[pc];
             if stack.len() != sched.height_in as usize {
                 return Err(ExecuteError::ScheduleMismatch {
@@ -149,10 +148,10 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
             let reads = resolve(&sched.reads, &stack, &locals, &self.globals)?;
 
             let outcome = match op {
-                Operator::Unreachable => return Err(Trap::Unreachable.into()),
-                Operator::Nop => Outcome::advance(OpCode::Nop, pc + 1),
+                Instruction::Unreachable => return Err(Trap::Unreachable.into()),
+                Instruction::Nop => Outcome::advance(OpCode::Nop, pc + 1),
 
-                Operator::Block { blockty } => {
+                Instruction::Block { blockty } => {
                     let (_, out) = image.block_arity(blockty)?;
                     frames.push(RtFrame {
                         is_loop: false,
@@ -161,7 +160,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     });
                     Outcome::advance(OpCode::Block, pc + 1)
                 }
-                Operator::Loop { blockty } => {
+                Instruction::Loop { blockty } => {
                     let (input, _) = image.block_arity(blockty)?;
                     frames.push(RtFrame {
                         is_loop: true,
@@ -170,7 +169,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     });
                     Outcome::advance(OpCode::Loop, pc + 1)
                 }
-                Operator::If { blockty } => {
+                Instruction::If { blockty } => {
                     let (_, out) = image.block_arity(blockty)?;
                     let cond = pop(&mut stack)?;
                     frames.push(RtFrame {
@@ -187,7 +186,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     reconcile(&mut frames, next);
                     Outcome::advance(OpCode::If, next)
                 }
-                Operator::Else => {
+                Instruction::Else => {
                     let Successors::Jump(target) = sched.successors else {
                         return Err(ExecuteError::invalid_binary(
                             "`else` without a jump successor",
@@ -196,7 +195,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     reconcile(&mut frames, target as usize);
                     Outcome::advance(OpCode::Else, target as usize)
                 }
-                Operator::End => match sched.successors {
+                Instruction::End => match sched.successors {
                     Successors::Return => {
                         let results = take_top(&mut stack, result_arity)?;
                         Outcome {
@@ -212,7 +211,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     }
                 },
 
-                Operator::Br { relative_depth } => {
+                Instruction::Br { relative_depth } => {
                     let Successors::Jump(target) = sched.successors else {
                         return Err(ExecuteError::invalid_binary(
                             "`br` without a jump successor",
@@ -233,7 +232,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                         control,
                     }
                 }
-                Operator::BrIf { relative_depth } => {
+                Instruction::BrIf { relative_depth } => {
                     let cond = pop(&mut stack)?;
                     let Successors::Branch { taken, not_taken } = sched.successors else {
                         return Err(ExecuteError::invalid_binary(
@@ -260,7 +259,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                         Outcome::advance(OpCode::BrIf, not_taken as usize)
                     }
                 }
-                Operator::BrTable { targets } => {
+                Instruction::BrTable { targets } => {
                     let selector = pop_u32(&mut stack)? as usize;
                     let Successors::Table {
                         targets: target_pcs,
@@ -289,7 +288,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                         control,
                     }
                 }
-                Operator::Return => {
+                Instruction::Return => {
                     let results = take_top(&mut stack, result_arity)?;
                     Outcome {
                         opcode: OpCode::Return,
@@ -299,7 +298,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     }
                 }
 
-                Operator::Call { function_index } => {
+                Instruction::Call { function_index } => {
                     let f = *function_index;
                     let (params, _) = image.func_arity(f).ok_or_else(|| {
                         ExecuteError::invalid_binary("call to an undeclared function")
@@ -343,18 +342,18 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                         }
                     }
                 }
-                Operator::CallIndirect { .. } => {
+                Instruction::CallIndirect { .. } => {
                     return Err(ExecuteError::UnsupportedOperator {
                         offset: 0,
                         message: "call_indirect".into(),
                     });
                 }
 
-                Operator::Drop => {
+                Instruction::Drop => {
                     pop(&mut stack)?;
                     Outcome::advance(OpCode::Drop, pc + 1)
                 }
-                Operator::Select => {
+                Instruction::Select => {
                     let cond = pop(&mut stack)?;
                     let rhs = pop(&mut stack)?;
                     let lhs = pop(&mut stack)?;
@@ -362,21 +361,21 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     Outcome::advance(OpCode::Select, pc + 1)
                 }
 
-                Operator::LocalGet { local_index } => {
+                Instruction::LocalGet { local_index } => {
                     let value = *locals
                         .get(*local_index as usize)
                         .ok_or_else(|| ExecuteError::invalid_binary("local index out of range"))?;
                     stack.push(value);
                     Outcome::advance(OpCode::LocalGet, pc + 1)
                 }
-                Operator::LocalSet { local_index } => {
+                Instruction::LocalSet { local_index } => {
                     let value = pop(&mut stack)?;
                     *locals.get_mut(*local_index as usize).ok_or_else(|| {
                         ExecuteError::invalid_binary("local index out of range")
                     })? = value;
                     Outcome::advance(OpCode::LocalSet, pc + 1)
                 }
-                Operator::LocalTee { local_index } => {
+                Instruction::LocalTee { local_index } => {
                     let value = *stack
                         .last()
                         .ok_or_else(|| ExecuteError::invalid_binary("operand stack underflow"))?;
@@ -385,7 +384,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     })? = value;
                     Outcome::advance(OpCode::LocalTee, pc + 1)
                 }
-                Operator::GlobalGet { global_index } => {
+                Instruction::GlobalGet { global_index } => {
                     let value = *self
                         .globals
                         .get(*global_index as usize)
@@ -393,7 +392,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     stack.push(value);
                     Outcome::advance(OpCode::GlobalGet, pc + 1)
                 }
-                Operator::GlobalSet { global_index } => {
+                Instruction::GlobalSet { global_index } => {
                     let value = pop(&mut stack)?;
                     *self
                         .globals
@@ -404,139 +403,139 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     Outcome::advance(OpCode::GlobalSet, pc + 1)
                 }
 
-                Operator::I32Const { value } => {
+                Instruction::I32Const { value } => {
                     stack.push(Word::I32(*value as u32));
                     Outcome::advance(OpCode::I32Const, pc + 1)
                 }
-                Operator::I64Const { value } => {
+                Instruction::I64Const { value } => {
                     stack.push(Word::I64(*value as u64));
                     Outcome::advance(OpCode::I64Const, pc + 1)
                 }
 
-                Operator::I32Load { memarg } => {
+                Instruction::I32Load { memarg } => {
                     self.load(&mut stack, memarg.offset, OpCode::I32Load, pc)?
                 }
-                Operator::I64Load { memarg } => {
+                Instruction::I64Load { memarg } => {
                     self.load(&mut stack, memarg.offset, OpCode::I64Load, pc)?
                 }
-                Operator::I32Load8S { memarg } => {
+                Instruction::I32Load8S { memarg } => {
                     self.load(&mut stack, memarg.offset, OpCode::I32Load8S, pc)?
                 }
-                Operator::I32Load8U { memarg } => {
+                Instruction::I32Load8U { memarg } => {
                     self.load(&mut stack, memarg.offset, OpCode::I32Load8U, pc)?
                 }
-                Operator::I32Load16S { memarg } => {
+                Instruction::I32Load16S { memarg } => {
                     self.load(&mut stack, memarg.offset, OpCode::I32Load16S, pc)?
                 }
-                Operator::I32Load16U { memarg } => {
+                Instruction::I32Load16U { memarg } => {
                     self.load(&mut stack, memarg.offset, OpCode::I32Load16U, pc)?
                 }
-                Operator::I64Load8S { memarg } => {
+                Instruction::I64Load8S { memarg } => {
                     self.load(&mut stack, memarg.offset, OpCode::I64Load8S, pc)?
                 }
-                Operator::I64Load8U { memarg } => {
+                Instruction::I64Load8U { memarg } => {
                     self.load(&mut stack, memarg.offset, OpCode::I64Load8U, pc)?
                 }
-                Operator::I64Load16S { memarg } => {
+                Instruction::I64Load16S { memarg } => {
                     self.load(&mut stack, memarg.offset, OpCode::I64Load16S, pc)?
                 }
-                Operator::I64Load16U { memarg } => {
+                Instruction::I64Load16U { memarg } => {
                     self.load(&mut stack, memarg.offset, OpCode::I64Load16U, pc)?
                 }
-                Operator::I64Load32S { memarg } => {
+                Instruction::I64Load32S { memarg } => {
                     self.load(&mut stack, memarg.offset, OpCode::I64Load32S, pc)?
                 }
-                Operator::I64Load32U { memarg } => {
+                Instruction::I64Load32U { memarg } => {
                     self.load(&mut stack, memarg.offset, OpCode::I64Load32U, pc)?
                 }
 
-                Operator::I32Store { memarg } => {
+                Instruction::I32Store { memarg } => {
                     self.store(&mut stack, memarg.offset, 4, OpCode::I32Store, pc)?
                 }
-                Operator::I64Store { memarg } => {
+                Instruction::I64Store { memarg } => {
                     self.store(&mut stack, memarg.offset, 8, OpCode::I64Store, pc)?
                 }
-                Operator::I32Store8 { memarg } => {
+                Instruction::I32Store8 { memarg } => {
                     self.store(&mut stack, memarg.offset, 1, OpCode::I32Store8, pc)?
                 }
-                Operator::I32Store16 { memarg } => {
+                Instruction::I32Store16 { memarg } => {
                     self.store(&mut stack, memarg.offset, 2, OpCode::I32Store16, pc)?
                 }
-                Operator::I64Store8 { memarg } => {
+                Instruction::I64Store8 { memarg } => {
                     self.store(&mut stack, memarg.offset, 1, OpCode::I64Store8, pc)?
                 }
-                Operator::I64Store16 { memarg } => {
+                Instruction::I64Store16 { memarg } => {
                     self.store(&mut stack, memarg.offset, 2, OpCode::I64Store16, pc)?
                 }
-                Operator::I64Store32 { memarg } => {
+                Instruction::I64Store32 { memarg } => {
                     self.store(&mut stack, memarg.offset, 4, OpCode::I64Store32, pc)?
                 }
 
-                Operator::MemorySize { .. } => self.size(&mut stack, pc),
-                Operator::MemoryGrow { .. } => self.grow(&mut stack, pc)?,
+                Instruction::MemorySize { .. } => self.size(&mut stack, pc),
+                Instruction::MemoryGrow { .. } => self.grow(&mut stack, pc)?,
 
-                Operator::I32Eqz => unop(&mut stack, Unary::Eqz, OpCode::I32Eqz, pc)?,
-                Operator::I64Eqz => unop(&mut stack, Unary::Eqz, OpCode::I64Eqz, pc)?,
-                Operator::I32Clz => unop(&mut stack, Unary::Clz, OpCode::I32Clz, pc)?,
-                Operator::I32Ctz => unop(&mut stack, Unary::Ctz, OpCode::I32Ctz, pc)?,
-                Operator::I32Popcnt => unop(&mut stack, Unary::Popcnt, OpCode::I32Popcnt, pc)?,
-                Operator::I64Clz => unop(&mut stack, Unary::Clz, OpCode::I64Clz, pc)?,
-                Operator::I64Ctz => unop(&mut stack, Unary::Ctz, OpCode::I64Ctz, pc)?,
-                Operator::I64Popcnt => unop(&mut stack, Unary::Popcnt, OpCode::I64Popcnt, pc)?,
+                Instruction::I32Eqz => unop(&mut stack, Unary::Eqz, OpCode::I32Eqz, pc)?,
+                Instruction::I64Eqz => unop(&mut stack, Unary::Eqz, OpCode::I64Eqz, pc)?,
+                Instruction::I32Clz => unop(&mut stack, Unary::Clz, OpCode::I32Clz, pc)?,
+                Instruction::I32Ctz => unop(&mut stack, Unary::Ctz, OpCode::I32Ctz, pc)?,
+                Instruction::I32Popcnt => unop(&mut stack, Unary::Popcnt, OpCode::I32Popcnt, pc)?,
+                Instruction::I64Clz => unop(&mut stack, Unary::Clz, OpCode::I64Clz, pc)?,
+                Instruction::I64Ctz => unop(&mut stack, Unary::Ctz, OpCode::I64Ctz, pc)?,
+                Instruction::I64Popcnt => unop(&mut stack, Unary::Popcnt, OpCode::I64Popcnt, pc)?,
 
-                Operator::I32Add => binop(&mut stack, Arithmetic::Add, OpCode::I32Add, pc)?,
-                Operator::I32Sub => binop(&mut stack, Arithmetic::Sub, OpCode::I32Sub, pc)?,
-                Operator::I32Mul => binop(&mut stack, Arithmetic::Mul, OpCode::I32Mul, pc)?,
-                Operator::I32DivS => binop(&mut stack, Arithmetic::DivS, OpCode::I32DivS, pc)?,
-                Operator::I32DivU => binop(&mut stack, Arithmetic::DivU, OpCode::I32DivU, pc)?,
-                Operator::I32RemS => binop(&mut stack, Arithmetic::RemS, OpCode::I32RemS, pc)?,
-                Operator::I32RemU => binop(&mut stack, Arithmetic::RemU, OpCode::I32RemU, pc)?,
-                Operator::I32And => binop(&mut stack, Arithmetic::And, OpCode::I32And, pc)?,
-                Operator::I32Or => binop(&mut stack, Arithmetic::Or, OpCode::I32Or, pc)?,
-                Operator::I32Xor => binop(&mut stack, Arithmetic::Xor, OpCode::I32Xor, pc)?,
-                Operator::I32Shl => binop(&mut stack, Arithmetic::Shl, OpCode::I32Shl, pc)?,
-                Operator::I32ShrS => binop(&mut stack, Arithmetic::ShrS, OpCode::I32ShrS, pc)?,
-                Operator::I32ShrU => binop(&mut stack, Arithmetic::ShrU, OpCode::I32ShrU, pc)?,
-                Operator::I32Rotl => binop(&mut stack, Arithmetic::Rotl, OpCode::I32Rotl, pc)?,
-                Operator::I32Rotr => binop(&mut stack, Arithmetic::Rotr, OpCode::I32Rotr, pc)?,
-                Operator::I64Add => binop(&mut stack, Arithmetic::Add, OpCode::I64Add, pc)?,
-                Operator::I64Sub => binop(&mut stack, Arithmetic::Sub, OpCode::I64Sub, pc)?,
-                Operator::I64Mul => binop(&mut stack, Arithmetic::Mul, OpCode::I64Mul, pc)?,
-                Operator::I64DivS => binop(&mut stack, Arithmetic::DivS, OpCode::I64DivS, pc)?,
-                Operator::I64DivU => binop(&mut stack, Arithmetic::DivU, OpCode::I64DivU, pc)?,
-                Operator::I64RemS => binop(&mut stack, Arithmetic::RemS, OpCode::I64RemS, pc)?,
-                Operator::I64RemU => binop(&mut stack, Arithmetic::RemU, OpCode::I64RemU, pc)?,
-                Operator::I64And => binop(&mut stack, Arithmetic::And, OpCode::I64And, pc)?,
-                Operator::I64Or => binop(&mut stack, Arithmetic::Or, OpCode::I64Or, pc)?,
-                Operator::I64Xor => binop(&mut stack, Arithmetic::Xor, OpCode::I64Xor, pc)?,
-                Operator::I64Shl => binop(&mut stack, Arithmetic::Shl, OpCode::I64Shl, pc)?,
-                Operator::I64ShrS => binop(&mut stack, Arithmetic::ShrS, OpCode::I64ShrS, pc)?,
-                Operator::I64ShrU => binop(&mut stack, Arithmetic::ShrU, OpCode::I64ShrU, pc)?,
-                Operator::I64Rotl => binop(&mut stack, Arithmetic::Rotl, OpCode::I64Rotl, pc)?,
-                Operator::I64Rotr => binop(&mut stack, Arithmetic::Rotr, OpCode::I64Rotr, pc)?,
+                Instruction::I32Add => binop(&mut stack, Arithmetic::Add, OpCode::I32Add, pc)?,
+                Instruction::I32Sub => binop(&mut stack, Arithmetic::Sub, OpCode::I32Sub, pc)?,
+                Instruction::I32Mul => binop(&mut stack, Arithmetic::Mul, OpCode::I32Mul, pc)?,
+                Instruction::I32DivS => binop(&mut stack, Arithmetic::DivS, OpCode::I32DivS, pc)?,
+                Instruction::I32DivU => binop(&mut stack, Arithmetic::DivU, OpCode::I32DivU, pc)?,
+                Instruction::I32RemS => binop(&mut stack, Arithmetic::RemS, OpCode::I32RemS, pc)?,
+                Instruction::I32RemU => binop(&mut stack, Arithmetic::RemU, OpCode::I32RemU, pc)?,
+                Instruction::I32And => binop(&mut stack, Arithmetic::And, OpCode::I32And, pc)?,
+                Instruction::I32Or => binop(&mut stack, Arithmetic::Or, OpCode::I32Or, pc)?,
+                Instruction::I32Xor => binop(&mut stack, Arithmetic::Xor, OpCode::I32Xor, pc)?,
+                Instruction::I32Shl => binop(&mut stack, Arithmetic::Shl, OpCode::I32Shl, pc)?,
+                Instruction::I32ShrS => binop(&mut stack, Arithmetic::ShrS, OpCode::I32ShrS, pc)?,
+                Instruction::I32ShrU => binop(&mut stack, Arithmetic::ShrU, OpCode::I32ShrU, pc)?,
+                Instruction::I32Rotl => binop(&mut stack, Arithmetic::Rotl, OpCode::I32Rotl, pc)?,
+                Instruction::I32Rotr => binop(&mut stack, Arithmetic::Rotr, OpCode::I32Rotr, pc)?,
+                Instruction::I64Add => binop(&mut stack, Arithmetic::Add, OpCode::I64Add, pc)?,
+                Instruction::I64Sub => binop(&mut stack, Arithmetic::Sub, OpCode::I64Sub, pc)?,
+                Instruction::I64Mul => binop(&mut stack, Arithmetic::Mul, OpCode::I64Mul, pc)?,
+                Instruction::I64DivS => binop(&mut stack, Arithmetic::DivS, OpCode::I64DivS, pc)?,
+                Instruction::I64DivU => binop(&mut stack, Arithmetic::DivU, OpCode::I64DivU, pc)?,
+                Instruction::I64RemS => binop(&mut stack, Arithmetic::RemS, OpCode::I64RemS, pc)?,
+                Instruction::I64RemU => binop(&mut stack, Arithmetic::RemU, OpCode::I64RemU, pc)?,
+                Instruction::I64And => binop(&mut stack, Arithmetic::And, OpCode::I64And, pc)?,
+                Instruction::I64Or => binop(&mut stack, Arithmetic::Or, OpCode::I64Or, pc)?,
+                Instruction::I64Xor => binop(&mut stack, Arithmetic::Xor, OpCode::I64Xor, pc)?,
+                Instruction::I64Shl => binop(&mut stack, Arithmetic::Shl, OpCode::I64Shl, pc)?,
+                Instruction::I64ShrS => binop(&mut stack, Arithmetic::ShrS, OpCode::I64ShrS, pc)?,
+                Instruction::I64ShrU => binop(&mut stack, Arithmetic::ShrU, OpCode::I64ShrU, pc)?,
+                Instruction::I64Rotl => binop(&mut stack, Arithmetic::Rotl, OpCode::I64Rotl, pc)?,
+                Instruction::I64Rotr => binop(&mut stack, Arithmetic::Rotr, OpCode::I64Rotr, pc)?,
 
-                Operator::I32Eq => cmpop(&mut stack, Compare::Eq, OpCode::I32Eq, pc)?,
-                Operator::I32Ne => cmpop(&mut stack, Compare::Ne, OpCode::I32Ne, pc)?,
-                Operator::I32LtS => cmpop(&mut stack, Compare::LtS, OpCode::I32LtS, pc)?,
-                Operator::I32LtU => cmpop(&mut stack, Compare::LtU, OpCode::I32LtU, pc)?,
-                Operator::I32GtS => cmpop(&mut stack, Compare::GtS, OpCode::I32GtS, pc)?,
-                Operator::I32GtU => cmpop(&mut stack, Compare::GtU, OpCode::I32GtU, pc)?,
-                Operator::I32LeS => cmpop(&mut stack, Compare::LeS, OpCode::I32LeS, pc)?,
-                Operator::I32LeU => cmpop(&mut stack, Compare::LeU, OpCode::I32LeU, pc)?,
-                Operator::I32GeS => cmpop(&mut stack, Compare::GeS, OpCode::I32GeS, pc)?,
-                Operator::I32GeU => cmpop(&mut stack, Compare::GeU, OpCode::I32GeU, pc)?,
-                Operator::I64Eq => cmpop(&mut stack, Compare::Eq, OpCode::I64Eq, pc)?,
-                Operator::I64Ne => cmpop(&mut stack, Compare::Ne, OpCode::I64Ne, pc)?,
-                Operator::I64LtS => cmpop(&mut stack, Compare::LtS, OpCode::I64LtS, pc)?,
-                Operator::I64LtU => cmpop(&mut stack, Compare::LtU, OpCode::I64LtU, pc)?,
-                Operator::I64GtS => cmpop(&mut stack, Compare::GtS, OpCode::I64GtS, pc)?,
-                Operator::I64GtU => cmpop(&mut stack, Compare::GtU, OpCode::I64GtU, pc)?,
-                Operator::I64LeS => cmpop(&mut stack, Compare::LeS, OpCode::I64LeS, pc)?,
-                Operator::I64LeU => cmpop(&mut stack, Compare::LeU, OpCode::I64LeU, pc)?,
-                Operator::I64GeS => cmpop(&mut stack, Compare::GeS, OpCode::I64GeS, pc)?,
-                Operator::I64GeU => cmpop(&mut stack, Compare::GeU, OpCode::I64GeU, pc)?,
+                Instruction::I32Eq => cmpop(&mut stack, Compare::Eq, OpCode::I32Eq, pc)?,
+                Instruction::I32Ne => cmpop(&mut stack, Compare::Ne, OpCode::I32Ne, pc)?,
+                Instruction::I32LtS => cmpop(&mut stack, Compare::LtS, OpCode::I32LtS, pc)?,
+                Instruction::I32LtU => cmpop(&mut stack, Compare::LtU, OpCode::I32LtU, pc)?,
+                Instruction::I32GtS => cmpop(&mut stack, Compare::GtS, OpCode::I32GtS, pc)?,
+                Instruction::I32GtU => cmpop(&mut stack, Compare::GtU, OpCode::I32GtU, pc)?,
+                Instruction::I32LeS => cmpop(&mut stack, Compare::LeS, OpCode::I32LeS, pc)?,
+                Instruction::I32LeU => cmpop(&mut stack, Compare::LeU, OpCode::I32LeU, pc)?,
+                Instruction::I32GeS => cmpop(&mut stack, Compare::GeS, OpCode::I32GeS, pc)?,
+                Instruction::I32GeU => cmpop(&mut stack, Compare::GeU, OpCode::I32GeU, pc)?,
+                Instruction::I64Eq => cmpop(&mut stack, Compare::Eq, OpCode::I64Eq, pc)?,
+                Instruction::I64Ne => cmpop(&mut stack, Compare::Ne, OpCode::I64Ne, pc)?,
+                Instruction::I64LtS => cmpop(&mut stack, Compare::LtS, OpCode::I64LtS, pc)?,
+                Instruction::I64LtU => cmpop(&mut stack, Compare::LtU, OpCode::I64LtU, pc)?,
+                Instruction::I64GtS => cmpop(&mut stack, Compare::GtS, OpCode::I64GtS, pc)?,
+                Instruction::I64GtU => cmpop(&mut stack, Compare::GtU, OpCode::I64GtU, pc)?,
+                Instruction::I64LeS => cmpop(&mut stack, Compare::LeS, OpCode::I64LeS, pc)?,
+                Instruction::I64LeU => cmpop(&mut stack, Compare::LeU, OpCode::I64LeU, pc)?,
+                Instruction::I64GeS => cmpop(&mut stack, Compare::GeS, OpCode::I64GeS, pc)?,
+                Instruction::I64GeU => cmpop(&mut stack, Compare::GeU, OpCode::I64GeU, pc)?,
 
-                Operator::I32WrapI64 => {
+                Instruction::I32WrapI64 => {
                     let bits = match pop(&mut stack)? {
                         Word::I64(b) => b,
                         Word::I32(b) => u64::from(b),
@@ -544,7 +543,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     stack.push(Word::I32(bits as u32));
                     Outcome::advance(OpCode::I32WrapI64, pc + 1)
                 }
-                Operator::I64ExtendI32S => {
+                Instruction::I64ExtendI32S => {
                     let bits = match pop(&mut stack)? {
                         Word::I32(b) => b,
                         Word::I64(b) => b as u32,
@@ -552,7 +551,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     stack.push(Word::I64(i64::from(bits as i32) as u64));
                     Outcome::advance(OpCode::I64ExtendI32S, pc + 1)
                 }
-                Operator::I64ExtendI32U => {
+                Instruction::I64ExtendI32U => {
                     let bits = match pop(&mut stack)? {
                         Word::I32(b) => b,
                         Word::I64(b) => b as u32,

@@ -32,6 +32,8 @@ impl Module {
     /// Validates `bytes` against the WASM features that are enabled for validation,
     /// extracting import/export metadata.
     ///
+    /// # Errors
+    ///
     /// Returns a [`DecodeError`] if the module is invalid_binary, uses a feature outside the
     /// allowed subset, or imports anything other than the permitted WASI functions.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
