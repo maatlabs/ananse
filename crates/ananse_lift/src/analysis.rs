@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use ananse_decoder::ModuleInfo;
 use wasmparser::{BlockType, FunctionBody, Operator};
 
+use crate::program::{CtrlFrame, Fixup, SuccessorSlot, ValueEffect};
 use crate::{LiftError, LiftedFunction, Register, Result, Schedule, Successors};
 
 /// Upper bound on a function's register-file width.
@@ -10,33 +11,34 @@ const MAX_REGISTER_FILE_WIDTH: u32 = 4096;
 
 /// Placeholder target for a forward branch, patched to the real continuation
 /// when the enclosing control frame is closed at its `end`.
-const PENDING: u32 = u32::MAX;
+const PENDING_BRANCH_TARGET: u32 = u32::MAX;
 
 /// Lifts every defined function in `bytes` to its static register schedule.
 pub(crate) fn lift_functions(bytes: &[u8]) -> Result<Vec<LiftedFunction>> {
-    let info = ModuleInfo::parse(bytes)?;
-    info.bodies
+    let module = ModuleInfo::parse(bytes)?;
+    module
+        .bodies
         .iter()
         .enumerate()
-        .map(|(i, body)| lift_function(&info, i, body))
+        .map(|(code_index, func_body)| lift_function(&module, code_index, func_body))
         .collect()
 }
 
 fn lift_function(
-    info: &ModuleInfo,
+    module: &ModuleInfo,
     code_index: usize,
-    body: &FunctionBody,
+    func: &FunctionBody,
 ) -> Result<LiftedFunction> {
     let func_index = u32::try_from(code_index)
         .ok()
-        .and_then(|i| info.num_imported_funcs.checked_add(i))
+        .and_then(|i| module.num_imported_funcs.checked_add(i))
         .ok_or(LiftError::FunctionTooLarge { func_index: 0 })?;
 
-    let (param_count, result_arity) = info.func_arity(func_index).ok_or(LiftError::internal(
+    let (param_count, result_arity) = module.func_arity(func_index).ok_or(LiftError::internal(
         "function references an undeclared type",
     ))?;
 
-    let declared = body
+    let declared = func
         .get_locals_reader()
         .map_err(LiftError::malformed)?
         .into_iter()
@@ -57,105 +59,16 @@ fn lift_function(
                 width: u64::from(param_count) + u64::from(declared),
             })?;
 
-    let mut lifter = Lifter::new(info, func_index, locals_count, result_arity);
+    let mut lifter = Lifter::new(module, func_index, locals_count, result_arity);
 
-    let mut ops = body.get_operators_reader().map_err(LiftError::malformed)?;
-    while !ops.eof() {
-        let offset = ops.original_position();
-        let op = ops.read().map_err(LiftError::malformed)?;
-        lifter.step(&op, offset)?;
+    let mut instrs_reader = func.get_operators_reader().map_err(LiftError::malformed)?;
+    while !instrs_reader.eof() {
+        let offset = instrs_reader.original_position();
+        let instruction = instrs_reader.read().map_err(LiftError::malformed)?;
+        lifter.step(&instruction, offset)?;
     }
 
     lifter.finish()
-}
-
-/// A WebAssembly structured-control frame, tracked as the lift walks a body.
-struct Frame {
-    /// Branch-target arity: values a branch carries to this label. Loops use
-    /// their input arity (the label is the loop header); all others use the
-    /// output arity (the label is past the matching `end`).
-    in_arity: u32,
-    out_arity: u32,
-    /// Operand-stack height at frame entry, below the frame's inputs.
-    floor: u32,
-    /// Whether the current point in this frame is unreachable (dead code).
-    unreachable: bool,
-    /// `Some(header_pc)` for a `loop`, whose branch target is its own header;
-    /// `None` for forward-closing frames.
-    loop_header: Option<u32>,
-    /// Forward branches awaiting this frame's continuation, patched at `end`.
-    fixups: Vec<Fixup>,
-    /// For an `if` frame, the `if` instruction whose `not_taken` target is still
-    /// pending an `else` or `end`.
-    if_instr: Option<usize>,
-}
-
-/// A forward branch whose target becomes known when its frame closes.
-struct Fixup {
-    /// Index of the instruction whose successor target must be patched.
-    instr: usize,
-    /// Which successor field of that instruction to patch.
-    slot: Slot,
-}
-
-enum Slot {
-    Jump,
-    BranchTaken,
-    TableEntry(usize),
-    TableDefault,
-}
-
-/// The stack effect and register touches of a non-control value operator.
-struct ValueEffect {
-    pops: u32,
-    pushes: u32,
-    bank_read: Option<Register>,
-    bank_write: Option<Register>,
-    /// `local.tee`: reads the operand-stack top and writes a local while leaving
-    /// the top in place, so its stack slot is not rewritten.
-    is_tee: bool,
-}
-
-impl ValueEffect {
-    fn stack(pops: u32, pushes: u32) -> Self {
-        Self {
-            pops,
-            pushes,
-            bank_read: None,
-            bank_write: None,
-            is_tee: false,
-        }
-    }
-
-    fn bank_read(reg: Register) -> Self {
-        Self {
-            pops: 0,
-            pushes: 1,
-            bank_read: Some(reg),
-            bank_write: None,
-            is_tee: false,
-        }
-    }
-
-    fn bank_write(reg: Register) -> Self {
-        Self {
-            pops: 1,
-            pushes: 0,
-            bank_read: None,
-            bank_write: Some(reg),
-            is_tee: false,
-        }
-    }
-
-    fn tee(reg: Register) -> Self {
-        Self {
-            pops: 1,
-            pushes: 1,
-            bank_read: None,
-            bank_write: Some(reg),
-            is_tee: true,
-        }
-    }
 }
 
 struct Lifter<'a> {
@@ -166,7 +79,7 @@ struct Lifter<'a> {
     result_arity: u32,
     height: u32,
     max_height: u32,
-    ctrl: Vec<Frame>,
+    frames: Vec<CtrlFrame>,
     schedules: Vec<Schedule>,
 }
 
@@ -177,7 +90,7 @@ impl<'a> Lifter<'a> {
         locals_count: u32,
         result_arity: u32,
     ) -> Self {
-        let func_frame = Frame {
+        let func_frame = CtrlFrame {
             in_arity: 0,
             out_arity: result_arity,
             floor: 0,
@@ -194,13 +107,13 @@ impl<'a> Lifter<'a> {
             result_arity,
             height: 0,
             max_height: 0,
-            ctrl: alloc::vec![func_frame],
+            frames: alloc::vec![func_frame],
             schedules: Vec::new(),
         }
     }
 
-    fn reachable(&self) -> bool {
-        self.ctrl.last().map(|f| !f.unreachable).unwrap_or(false)
+    fn cur_frame_reachable(&self) -> bool {
+        self.frames.last().map(|f| !f.unreachable).unwrap_or(false)
     }
 
     fn push_one(&mut self) -> Result<()> {
@@ -224,7 +137,7 @@ impl<'a> Lifter<'a> {
     /// leaves the height unchanged.
     fn pop_one(&mut self) {
         let (floor, unreachable) = self
-            .ctrl
+            .frames
             .last()
             .map(|f| (f.floor, f.unreachable))
             .unwrap_or((0, false));
@@ -246,7 +159,7 @@ impl<'a> Lifter<'a> {
     /// the WASM validation algorithm's treatment of code after an unconditional
     /// branch, `return`, or `unreachable`.
     fn mark_unreachable(&mut self) {
-        if let Some(frame) = self.ctrl.last_mut() {
+        if let Some(frame) = self.frames.last_mut() {
             self.height = frame.floor;
             frame.unreachable = true;
         }
@@ -289,7 +202,7 @@ impl<'a> Lifter<'a> {
     ) -> Result<()> {
         self.pop(in_arity);
         let floor = self.height;
-        self.ctrl.push(Frame {
+        self.frames.push(CtrlFrame {
             in_arity,
             out_arity,
             floor,
@@ -306,7 +219,7 @@ impl<'a> Lifter<'a> {
     /// Returns `true` when the closed frame was the function frame.
     fn pop_ctrl(&mut self, end_pc: u32) -> Result<bool> {
         let frame = self
-            .ctrl
+            .frames
             .pop()
             .ok_or_else(|| LiftError::internal("`end` with no open control frame"))?;
         let continuation = end_pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
@@ -316,20 +229,24 @@ impl<'a> Lifter<'a> {
         for fixup in &frame.fixups {
             let succ = &mut self
                 .schedules
-                .get_mut(fixup.instr)
+                .get_mut(fixup.instr_index)
                 .ok_or(LiftError::internal(
                     "branch fixup references a missing instruction",
                 ))?
                 .successors;
             match (succ, &fixup.slot) {
-                (Successors::Jump(t), Slot::Jump) => *t = continuation,
-                (Successors::Branch { taken, .. }, Slot::BranchTaken) => *taken = continuation,
-                (Successors::Table { targets, .. }, Slot::TableEntry(i)) => {
+                (Successors::Jump(t), SuccessorSlot::Jump) => *t = continuation,
+                (Successors::Branch { taken, .. }, SuccessorSlot::BranchTaken) => {
+                    *taken = continuation
+                }
+                (Successors::Table { targets, .. }, SuccessorSlot::TableEntry(i)) => {
                     if let Some(t) = targets.get_mut(*i) {
                         *t = continuation;
                     }
                 }
-                (Successors::Table { default, .. }, Slot::TableDefault) => *default = continuation,
+                (Successors::Table { default, .. }, SuccessorSlot::TableDefault) => {
+                    *default = continuation
+                }
                 _ => {
                     return Err(LiftError::internal(
                         "branch fixup slot does not match its successor",
@@ -357,27 +274,32 @@ impl<'a> Lifter<'a> {
                 })?;
         self.max_height = self.max_height.max(self.height);
 
-        Ok(self.ctrl.is_empty())
+        Ok(self.frames.is_empty())
     }
 
     /// Resolves a branch to `relative_depth`, returning the target program point
     /// and registering a fixup when the target frame closes forward.
-    fn branch_target(&mut self, relative_depth: u32, instr: usize, slot: Slot) -> Result<u32> {
+    fn branch_target(
+        &mut self,
+        relative_depth: u32,
+        instr_index: usize,
+        slot: SuccessorSlot,
+    ) -> Result<u32> {
         let idx = self
-            .ctrl
+            .frames
             .len()
             .checked_sub(1)
             .and_then(|top| top.checked_sub(relative_depth as usize))
             .ok_or_else(|| LiftError::internal("branch depth exceeds the control stack"))?;
         let frame = self
-            .ctrl
+            .frames
             .get_mut(idx)
             .ok_or_else(|| LiftError::internal("branch target frame is missing"))?;
         match frame.loop_header {
             Some(header) => Ok(header),
             None => {
-                frame.fixups.push(Fixup { instr, slot });
-                Ok(PENDING)
+                frame.fixups.push(Fixup { instr_index, slot });
+                Ok(PENDING_BRANCH_TARGET)
             }
         }
     }
@@ -432,7 +354,7 @@ impl<'a> Lifter<'a> {
             func_index: self.func_index,
         })?;
         let height_in = self.height;
-        let reachable = self.reachable();
+        let reachable = self.cur_frame_reachable();
 
         match op {
             Block { blockty } => {
@@ -477,7 +399,7 @@ impl<'a> Lifter<'a> {
                     Vec::new(),
                     Successors::Branch {
                         taken: then_pc,
-                        not_taken: PENDING,
+                        not_taken: PENDING_BRANCH_TARGET,
                     },
                 );
                 self.pop(1);
@@ -485,12 +407,12 @@ impl<'a> Lifter<'a> {
             }
             Else => {
                 let top = self
-                    .ctrl
+                    .frames
                     .len()
                     .checked_sub(1)
                     .ok_or_else(|| LiftError::internal("`else` with no open control frame"))?;
                 let (floor, in_arity, if_instr) = {
-                    let frame = &mut self.ctrl[top];
+                    let frame = &mut self.frames[top];
                     (frame.floor, frame.in_arity, frame.if_instr.take())
                 };
                 let if_idx = if_instr
@@ -510,13 +432,13 @@ impl<'a> Lifter<'a> {
                     height_in,
                     Vec::new(),
                     Vec::new(),
-                    Successors::Jump(PENDING),
+                    Successors::Jump(PENDING_BRANCH_TARGET),
                 );
-                self.ctrl[top].fixups.push(Fixup {
-                    instr: pc as usize,
-                    slot: Slot::Jump,
+                self.frames[top].fixups.push(Fixup {
+                    instr_index: pc as usize,
+                    slot: SuccessorSlot::Jump,
                 });
-                self.ctrl[top].unreachable = false;
+                self.frames[top].unreachable = false;
                 self.height = floor;
                 self.push(in_arity)?;
             }
@@ -535,7 +457,8 @@ impl<'a> Lifter<'a> {
                 }
             }
             Br { relative_depth } => {
-                let target = self.branch_target(*relative_depth, pc as usize, Slot::Jump)?;
+                let target =
+                    self.branch_target(*relative_depth, pc as usize, SuccessorSlot::Jump)?;
                 self.push_instr(
                     pc,
                     height_in,
@@ -552,7 +475,8 @@ impl<'a> Lifter<'a> {
                     Vec::new()
                 };
                 self.pop(1);
-                let taken = self.branch_target(*relative_depth, pc as usize, Slot::BranchTaken)?;
+                let taken =
+                    self.branch_target(*relative_depth, pc as usize, SuccessorSlot::BranchTaken)?;
                 let not_taken = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
                     func_index: self.func_index,
                 })?;
@@ -574,10 +498,17 @@ impl<'a> Lifter<'a> {
                 let mut resolved = Vec::new();
                 for (i, depth) in targets.targets().enumerate() {
                     let depth = depth.map_err(LiftError::malformed)?;
-                    resolved.push(self.branch_target(depth, pc as usize, Slot::TableEntry(i))?);
+                    resolved.push(self.branch_target(
+                        depth,
+                        pc as usize,
+                        SuccessorSlot::TableEntry(i),
+                    )?);
                 }
-                let default =
-                    self.branch_target(targets.default(), pc as usize, Slot::TableDefault)?;
+                let default = self.branch_target(
+                    targets.default(),
+                    pc as usize,
+                    SuccessorSlot::TableDefault,
+                )?;
                 self.push_instr(
                     pc,
                     height_in,
@@ -628,7 +559,7 @@ impl<'a> Lifter<'a> {
     }
 
     fn finish(self) -> Result<LiftedFunction> {
-        if !self.ctrl.is_empty() {
+        if !self.frames.is_empty() {
             return Err(LiftError::internal(
                 "function body ended with an open control frame",
             ));
