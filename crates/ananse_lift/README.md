@@ -16,7 +16,7 @@ let module = Module::decode(&wasm).expect("decode");
 let program = lift(&module).expect("lift");
 
 for function in &program.functions {
-    for instr in &function.instrs {
+    for instr in &function.schedules {
         // `instr.height_in` is the operand-stack height on entry to this program
         // point; `instr.reads` / `instr.writes` are its register operands.
         let _ = (instr.pc, instr.height_in, &instr.reads, &instr.writes);

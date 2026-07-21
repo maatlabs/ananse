@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use ananse_decoder::ModuleInfo;
 use wasmparser::{BlockType, FunctionBody, Operator};
 
-use crate::{InstructionSchedule, LiftError, LiftedFunction, Register, Result, Successors};
+use crate::{LiftError, LiftedFunction, Register, Result, Schedule, Successors};
 
 /// Upper bound on a function's register-file width.
 const MAX_REGISTER_FILE_WIDTH: u32 = 4096;
@@ -167,7 +167,7 @@ struct Lifter<'a> {
     height: u32,
     max_height: u32,
     ctrl: Vec<Frame>,
-    instrs: Vec<InstructionSchedule>,
+    schedules: Vec<Schedule>,
 }
 
 impl<'a> Lifter<'a> {
@@ -195,7 +195,7 @@ impl<'a> Lifter<'a> {
             height: 0,
             max_height: 0,
             ctrl: alloc::vec![func_frame],
-            instrs: Vec::new(),
+            schedules: Vec::new(),
         }
     }
 
@@ -260,7 +260,7 @@ impl<'a> Lifter<'a> {
         writes: Vec<Register>,
         successors: Successors,
     ) {
-        self.instrs.push(InstructionSchedule {
+        self.schedules.push(Schedule {
             pc,
             height_in,
             reads,
@@ -315,7 +315,7 @@ impl<'a> Lifter<'a> {
 
         for fixup in &frame.fixups {
             let succ = &mut self
-                .instrs
+                .schedules
                 .get_mut(fixup.instr)
                 .ok_or(LiftError::internal(
                     "branch fixup references a missing instruction",
@@ -339,10 +339,10 @@ impl<'a> Lifter<'a> {
         }
 
         if let Some(if_idx) = frame.if_instr
-            && let Some(InstructionSchedule {
+            && let Some(Schedule {
                 successors: Successors::Branch { not_taken, .. },
                 ..
-            }) = self.instrs.get_mut(if_idx)
+            }) = self.schedules.get_mut(if_idx)
         {
             *not_taken = continuation;
         }
@@ -428,7 +428,7 @@ impl<'a> Lifter<'a> {
     fn step(&mut self, op: &Operator, offset: usize) -> Result<()> {
         use Operator::{Block, Br, BrIf, BrTable, Else, End, If, Loop, Nop, Return, Unreachable};
 
-        let pc = u32::try_from(self.instrs.len()).map_err(|_| LiftError::FunctionTooLarge {
+        let pc = u32::try_from(self.schedules.len()).map_err(|_| LiftError::FunctionTooLarge {
             func_index: self.func_index,
         })?;
         let height_in = self.height;
@@ -498,10 +498,10 @@ impl<'a> Lifter<'a> {
                 let else_body = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
                     func_index: self.func_index,
                 })?;
-                if let Some(InstructionSchedule {
+                if let Some(Schedule {
                     successors: Successors::Branch { not_taken, .. },
                     ..
-                }) = self.instrs.get_mut(if_idx)
+                }) = self.schedules.get_mut(if_idx)
                 {
                     *not_taken = else_body;
                 }
@@ -529,7 +529,7 @@ impl<'a> Lifter<'a> {
                     Successors::Fallthrough,
                 );
                 if self.pop_ctrl(pc)?
-                    && let Some(instr) = self.instrs.get_mut(pc as usize)
+                    && let Some(instr) = self.schedules.get_mut(pc as usize)
                 {
                     instr.successors = Successors::Return;
                 }
@@ -658,7 +658,7 @@ impl<'a> Lifter<'a> {
             globals_count: self.globals_count,
             max_stack_height: self.max_height,
             reg_file_width,
-            instrs: self.instrs,
+            schedules: self.schedules,
         })
     }
 }

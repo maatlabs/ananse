@@ -214,7 +214,7 @@ fn padding_rests_on_the_exit_sentinel_with_an_idle_bus() {
         .iter()
         .find(|f| f.func_index == func_index)
         .expect("lifted")
-        .instrs
+        .schedules
         .len();
     let trace = Trace::build(&program, records, &[], &[]).expect("build");
 

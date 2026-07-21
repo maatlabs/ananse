@@ -910,7 +910,7 @@ fn program_rom_contains_every_executed_edge() {
         // The local/global offset the operator touches, resolved the way the ROM and
         // trace resolve it: a local keeps its index, a global sits above the locals.
         let immediate_offset = |pc: usize| -> u32 {
-            let schedule = &function.instrs[pc];
+            let schedule = &function.schedules[pc];
             schedule
                 .reads
                 .iter()
@@ -926,7 +926,7 @@ fn program_rom_contains_every_executed_edge() {
         for record in &records {
             if let Transition::Next(next_pc) = record.transition {
                 let pc = record.pc as usize;
-                let height = function.instrs[pc].height_in;
+                let height = function.schedules[pc].height_in;
                 let imm = immediate_offset(pc);
                 let edge = pack_edge(record.pc, opcode_index(record.opcode), next_pc, height, imm)
                     .expect("executed edge packs");
@@ -941,7 +941,7 @@ fn program_rom_contains_every_executed_edge() {
 
         // The halt self-loop the padded trace tail rests on is a table member too,
         // packed at the exit sentinel's height and offset zero.
-        let halt = u32::try_from(function.instrs.len()).expect("body fits u32");
+        let halt = u32::try_from(function.schedules.len()).expect("body fits u32");
         let halt_loop = pack_edge(halt, SEL_PADDING, halt, 0, 0).expect("halt edge packs");
         assert!(rom.contains(&halt_loop), "{name}: halt self-loop absent");
     }

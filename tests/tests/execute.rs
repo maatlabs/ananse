@@ -89,7 +89,7 @@ fn records_agree_with_lift_schedule() {
                 .iter()
                 .find(|f| f.func_index == record.func_index)
                 .expect("executed function was lifted");
-            let scheduled = &lifted.instrs[record.pc as usize];
+            let scheduled = &lifted.schedules[record.pc as usize];
             let read_regs: Vec<Register> = record.reads.iter().map(|r| r.reg).collect();
             let write_regs: Vec<Register> = record.writes.iter().map(|w| w.reg).collect();
             assert_eq!(

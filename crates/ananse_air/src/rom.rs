@@ -23,7 +23,7 @@ pub(crate) const HEIGHT_PLACE: u64 = NEXT_PC_PLACE * PC_RADIX;
 pub(crate) const IMM_PLACE: u64 = HEIGHT_PLACE * REG_RADIX;
 
 pub fn program_rom(opcodes: &[OpCode], function: &LiftedFunction) -> Result<Vec<Felt>> {
-    let body_len = function.instrs.len();
+    let body_len = function.schedules.len();
     if opcodes.len() != body_len {
         return Err(AirError::ScheduleLengthMismatch {
             opcodes: opcodes.len(),
@@ -37,7 +37,7 @@ pub fn program_rom(opcodes: &[OpCode], function: &LiftedFunction) -> Result<Vec<
     }
 
     let mut packed = function
-        .instrs
+        .schedules
         .iter()
         .enumerate()
         .flat_map(|(pc, sched)| {
@@ -77,7 +77,7 @@ pub fn program_data(
     constants: &[Option<u64>],
     function: &LiftedFunction,
 ) -> Result<Vec<(u32, u32, u32)>> {
-    let body_len = function.instrs.len();
+    let body_len = function.schedules.len();
     if constants.len() != body_len {
         return Err(AirError::ScheduleLengthMismatch {
             opcodes: constants.len(),
@@ -91,7 +91,7 @@ pub fn program_data(
     };
     let mut entries = (0..body_len)
         .filter_map(
-            |pc| match (constants[pc], &function.instrs[pc].successors) {
+            |pc| match (constants[pc], &function.schedules[pc].successors) {
                 // `bits` is a 64-bit value's pattern; the masked halves are 32-bit limbs.
                 (Some(bits), _) => {
                     Some(entry(pc, (bits & 0xFFFF_FFFF) as u32, (bits >> 32) as u32))
@@ -135,7 +135,7 @@ fn pack(pc: u64, opcode_id: u64, next_pc: u64, height: u64, imm: u64) -> Option<
 }
 
 fn immediate_offset(function: &LiftedFunction, pc: usize) -> u64 {
-    let schedule = &function.instrs[pc];
+    let schedule = &function.schedules[pc];
     schedule
         .reads
         .iter()

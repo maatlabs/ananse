@@ -136,7 +136,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
 
         loop {
             let op = &func.instructions[pc];
-            let sched = &lf.instrs[pc];
+            let sched = &lf.schedules[pc];
             if stack.len() != sched.height_in as usize {
                 return Err(ExecuteError::ScheduleMismatch {
                     func_index,
@@ -703,7 +703,7 @@ fn branch_to(
     lf: &LiftedFunction,
     result_arity: u32,
 ) -> Result<Control> {
-    if target as usize == lf.instrs.len() {
+    if target as usize == lf.schedules.len() {
         return Ok(Control::Return(take_top(stack, result_arity)?));
     }
     let target_idx = frames
@@ -716,7 +716,7 @@ fn branch_to(
         .ok_or_else(|| ExecuteError::invalid_binary("branch target frame is missing"))?;
     let (arity, is_loop) = (frame.branch_arity as usize, frame.is_loop);
     let target_height = lf
-        .instrs
+        .schedules
         .get(target as usize)
         .map(|instr| instr.height_in as usize)
         .ok_or_else(|| ExecuteError::invalid_binary("branch target out of range"))?;

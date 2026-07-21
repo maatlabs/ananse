@@ -97,9 +97,9 @@ impl Trace {
         let accesses = access_stream(&records, exec_frame)?;
         validate(&accesses)?;
 
-        let halt_pc = func.instrs.len() as u32;
+        let halt_pc = func.schedules.len() as u32;
         let heights = func
-            .instrs
+            .schedules
             .iter()
             .map(|instr| instr.height_in)
             .collect::<Vec<_>>();
@@ -397,7 +397,7 @@ fn fill_pcdata(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord, func:
         }
         OpCode::If | OpCode::BrIf => {
             if let Some(Successors::Branch { taken, not_taken }) = func
-                .instrs
+                .schedules
                 .get(record.pc as usize)
                 .map(|instr| &instr.successors)
             {
@@ -603,7 +603,7 @@ fn boolean(flag: bool) -> Felt {
 
 fn edge_count(function: &LiftedFunction) -> usize {
     let targets = function
-        .instrs
+        .schedules
         .iter()
         .map(|sched| match &sched.successors {
             Successors::Fallthrough
@@ -615,6 +615,6 @@ fn edge_count(function: &LiftedFunction) -> usize {
         })
         .sum::<usize>();
     targets
-        .saturating_add(function.instrs.len())
+        .saturating_add(function.schedules.len())
         .saturating_add(1)
 }

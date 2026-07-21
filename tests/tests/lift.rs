@@ -42,11 +42,11 @@ fn assert_heights_match(name: &str, bytes: &[u8]) {
     );
     for (f, (func, heights)) in program.functions.iter().zip(&oracle).enumerate() {
         assert_eq!(
-            func.instrs.len(),
+            func.schedules.len(),
             heights.len(),
             "{name} fn{f}: instruction count vs validator",
         );
-        for (i, instr) in func.instrs.iter().enumerate() {
+        for (i, instr) in func.schedules.iter().enumerate() {
             assert_eq!(instr.pc as usize, i, "{name} fn{f}: pc equals body index");
             assert_eq!(
                 instr.height_in, heights[i],
@@ -86,16 +86,19 @@ fn func_add_register_schedule() {
     assert_eq!(f.reg_file_width, 4, "2 locals + 0 globals + 2 stack");
 
     // local.get 0, local.get 1, i32.add, end
-    assert_eq!(f.instrs.len(), 4);
-    assert_eq!(f.instrs[0].reads, [Register::Local(0)]);
-    assert_eq!(f.instrs[0].writes, [Register::Stack(0)]);
-    assert_eq!(f.instrs[1].reads, [Register::Local(1)]);
-    assert_eq!(f.instrs[1].writes, [Register::Stack(1)]);
+    assert_eq!(f.schedules.len(), 4);
+    assert_eq!(f.schedules[0].reads, [Register::Local(0)]);
+    assert_eq!(f.schedules[0].writes, [Register::Stack(0)]);
+    assert_eq!(f.schedules[1].reads, [Register::Local(1)]);
+    assert_eq!(f.schedules[1].writes, [Register::Stack(1)]);
     // operands are popped top-first: the second-pushed value leads.
-    assert_eq!(f.instrs[2].reads, [Register::Stack(1), Register::Stack(0)]);
-    assert_eq!(f.instrs[2].writes, [Register::Stack(0)]);
-    assert_eq!(f.instrs[2].successors, Successors::Fallthrough);
-    assert_eq!(f.instrs[3].successors, Successors::Return);
+    assert_eq!(
+        f.schedules[2].reads,
+        [Register::Stack(1), Register::Stack(0)]
+    );
+    assert_eq!(f.schedules[2].writes, [Register::Stack(0)]);
+    assert_eq!(f.schedules[2].successors, Successors::Fallthrough);
+    assert_eq!(f.schedules[3].successors, Successors::Return);
 }
 
 #[test]
@@ -105,10 +108,10 @@ fn local_set_reads_stack_writes_local() {
     let f = &program.functions[0];
     assert_eq!(f.locals_count, 1, "no params, one declared local");
     // i32.const 42, local.set 0, local.get 0, end
-    assert_eq!(f.instrs[1].reads, [Register::Stack(0)]);
-    assert_eq!(f.instrs[1].writes, [Register::Local(0)]);
-    assert_eq!(f.instrs[2].reads, [Register::Local(0)]);
-    assert_eq!(f.instrs[2].writes, [Register::Stack(0)]);
+    assert_eq!(f.schedules[1].reads, [Register::Stack(0)]);
+    assert_eq!(f.schedules[1].writes, [Register::Local(0)]);
+    assert_eq!(f.schedules[2].reads, [Register::Local(0)]);
+    assert_eq!(f.schedules[2].writes, [Register::Stack(0)]);
 }
 
 #[test]
@@ -134,9 +137,9 @@ fn call_resolves_callee_arity() {
     assert_eq!(program.functions[1].func_index, 1);
     // call_doubler: local.get 0, call $double, end
     let caller = &program.functions[0];
-    assert_eq!(caller.instrs[1].reads, [Register::Stack(0)]);
-    assert_eq!(caller.instrs[1].writes, [Register::Stack(0)]);
-    assert_eq!(caller.instrs[1].successors, Successors::Fallthrough);
+    assert_eq!(caller.schedules[1].reads, [Register::Stack(0)]);
+    assert_eq!(caller.schedules[1].writes, [Register::Stack(0)]);
+    assert_eq!(caller.schedules[1].successors, Successors::Fallthrough);
 }
 
 #[test]
@@ -145,7 +148,7 @@ fn fibonacci_if_branches_around_then_arm() {
     let program = lift(&module).expect("lifts");
     let f = &program.functions[0];
     // local.get, i32.const, i32.lt_s, if(pc3), i32.const, return(pc5), end(pc6), ...
-    match &f.instrs[3].successors {
+    match &f.schedules[3].successors {
         Successors::Branch { taken, not_taken } => {
             assert_eq!(*taken, 4, "then-arm begins right after the `if`");
             assert_eq!(
@@ -156,12 +159,12 @@ fn fibonacci_if_branches_around_then_arm() {
         other => panic!("expected a Branch at the `if`, got {other:?}"),
     }
     assert_eq!(
-        f.instrs[5].successors,
+        f.schedules[5].successors,
         Successors::Return,
         "then-arm `return`"
     );
     assert_eq!(
-        f.instrs.last().expect("non-empty body").successors,
+        f.schedules.last().expect("non-empty body").successors,
         Successors::Return,
         "function's final `end`",
     );
@@ -174,7 +177,7 @@ fn if_else_wires_then_else_and_join() {
     let f = &program.functions[0];
     // local.get(0), if(1), i32.const(2), else(3), i32.const(4), end(5), end(6)
     assert_eq!(
-        f.instrs[1].successors,
+        f.schedules[1].successors,
         Successors::Branch {
             taken: 2,
             not_taken: 4
@@ -182,7 +185,7 @@ fn if_else_wires_then_else_and_join() {
         "`if` enters then-arm or jumps to the else body",
     );
     assert_eq!(
-        f.instrs[3].successors,
+        f.schedules[3].successors,
         Successors::Jump(6),
         "`else` skips the else body's `end` to the join",
     );
@@ -195,7 +198,7 @@ fn loop_branch_targets_header() {
     let f = &program.functions[0];
     // loop(0), local.get(1), br_if(2), end(3), end(4)
     assert_eq!(
-        f.instrs[2].successors,
+        f.schedules[2].successors,
         Successors::Branch {
             taken: 1,
             not_taken: 3
@@ -210,5 +213,5 @@ fn forward_branch_targets_continuation() {
     let program = lift(&module).expect("lifts");
     let f = &program.functions[0];
     // block(0), br(1), end(2), end(3): br exits the block to pc 3
-    assert_eq!(f.instrs[1].successors, Successors::Jump(3));
+    assert_eq!(f.schedules[1].successors, Successors::Jump(3));
 }

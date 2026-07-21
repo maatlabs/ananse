@@ -23,18 +23,18 @@ pub struct LiftedFunction {
     /// Width of the register file, `locals_count + globals_count + max_stack_height`.
     pub reg_file_width: u32,
     /// Per-program-point instruction schedule in body order.
-    pub instrs: Vec<InstructionSchedule>,
+    pub schedules: Vec<Schedule>,
 }
 
 /// The static schedule for a single WebAssembly instruction.
 ///
-/// One [`InstructionSchedule`] is emitted per operator in body order, so
-/// `instrs[i].pc == i`. It records the operand-stack height entering the
+/// A single instruction schedule is emitted per operator/instruction in body order,
+/// so `schedules[i].pc == i`. It records the operand-stack height entering the
 /// instruction, the register operands it reads and writes, and where control
 /// flows next.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InstructionSchedule {
-    /// Program point: the operator's zero-based index within the function body.
+pub struct Schedule {
+    /// Program point: the instruction's zero-based index within the function body.
     pub pc: u32,
     /// Operand-stack height immediately before the instruction executes.
     pub height_in: u32,
