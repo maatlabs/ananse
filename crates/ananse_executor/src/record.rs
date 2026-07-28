@@ -52,6 +52,17 @@ impl Entry {
     }
 }
 
+/// The state/outcome of an execution.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Execution {
+    /// The entry function's return values, empty if the program exited.
+    pub returns: Vec<Word>,
+    /// The status code if the program halted through `proc_exit`.
+    pub exit: Option<i32>,
+    /// The number of instructions executed (records emitted).
+    pub steps: u64,
+}
+
 /// A sink for the [`StepRecord`] stream an execution emits.
 pub trait StepObserver {
     /// Receives the next executed instruction's record.
@@ -163,6 +174,16 @@ pub(crate) enum Control {
     Advance(usize),
     Return(Vec<Word>),
     Exit(i32),
+}
+
+impl Control {
+    pub(crate) fn transition(&self) -> Transition {
+        match self {
+            Self::Advance(next) => Transition::Next(*next as u32),
+            Self::Return(_) => Transition::Return,
+            Self::Exit(code) => Transition::Exit(*code),
+        }
+    }
 }
 
 /// What a function evaluation produced.

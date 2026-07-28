@@ -9,14 +9,15 @@
 
 mod error;
 mod interpreter;
+mod memory;
 mod operations;
 mod record;
 
 use ananse_decoder::ImportEntry;
 pub use ananse_decoder::{OpCode, Word};
 pub use error::{ExecuteError, Trap};
-pub use interpreter::{Execution, execute};
-pub use record::{Entry, MemAccess, RegAccess, StepObserver, StepRecord, Transition};
+pub use interpreter::execute;
+pub use record::{Entry, Execution, MemAccess, RegAccess, StepObserver, StepRecord, Transition};
 
 /// Result of module execution operations.
 pub type Result<T> = core::result::Result<T, ExecuteError>;

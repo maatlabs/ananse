@@ -1,11 +1,12 @@
-use ananse_decoder::Word;
+use ananse_decoder::{OpCode, Word};
 
-use crate::Trap;
+use crate::record::Outcome;
+use crate::{Result, Trap, memory};
 
-/// A two-operand (binary) integer operation, abstract over the `i32` / `i64`
+/// A two-operand (binary) integer arithmetic, abstract over the `i32` / `i64`
 /// width carried by its operands.
 #[derive(Clone, Copy)]
-pub(crate) enum Arithmetic {
+pub(crate) enum Binary {
     Add,
     Sub,
     Mul,
@@ -23,7 +24,7 @@ pub(crate) enum Arithmetic {
     Rotr,
 }
 
-/// A two-operand (binary) integer comparison, producing an `i32` boolean.
+/// A two-operand integer comparison, producing an `i32` boolean.
 #[derive(Clone, Copy)]
 pub(crate) enum Compare {
     Eq,
@@ -63,17 +64,40 @@ pub(crate) enum Unary {
 ///
 /// Division and remainder trap on a zero divisor; signed division traps on the
 /// `MIN / -1` overflow.
-pub(crate) fn arithmetic(kind: Arithmetic, lhs: Word, rhs: Word) -> Result<Word, Trap> {
+pub fn binop(stack: &mut Vec<Word>, kind: Binary, opcode: OpCode, pc: usize) -> Result<Outcome> {
+    let rhs = memory::stack_pop(stack)?;
+    let lhs = memory::stack_pop(stack)?;
+    stack.push(arithmetic(kind, lhs, rhs)?);
+    Ok(Outcome::advance(opcode, pc + 1))
+}
+
+/// Applies a comparison to two same-width operands, yielding an `i32` `0` or `1`.
+pub fn cmpop(stack: &mut Vec<Word>, kind: Compare, opcode: OpCode, pc: usize) -> Result<Outcome> {
+    let rhs = memory::stack_pop(stack)?;
+    let lhs = memory::stack_pop(stack)?;
+    stack.push(compare(kind, lhs, rhs));
+    Ok(Outcome::advance(opcode, pc + 1))
+}
+
+/// Applies a unary operator. `eqz` yields an `i32`; the bit-count operators
+/// preserve the operand width.
+pub fn unop(stack: &mut Vec<Word>, kind: Unary, opcode: OpCode, pc: usize) -> Result<Outcome> {
+    let operand = memory::stack_pop(stack)?;
+    stack.push(unary(kind, operand));
+    Ok(Outcome::advance(opcode, pc + 1))
+}
+
+fn arithmetic(kind: Binary, lhs: Word, rhs: Word) -> core::result::Result<Word, Trap> {
     let (x, width) = lhs.raw();
     let (y, _) = rhs.raw();
     let m = mask(width);
     let result = match kind {
-        Arithmetic::Add => x.wrapping_add(y) & m,
-        Arithmetic::Sub => x.wrapping_sub(y) & m,
-        Arithmetic::Mul => x.wrapping_mul(y) & m,
-        Arithmetic::DivU => (x.checked_div(y).ok_or(Trap::DivideByZero)?) & m,
-        Arithmetic::RemU => x.checked_rem(y).ok_or(Trap::DivideByZero)?,
-        Arithmetic::DivS => {
+        Binary::Add => x.wrapping_add(y) & m,
+        Binary::Sub => x.wrapping_sub(y) & m,
+        Binary::Mul => x.wrapping_mul(y) & m,
+        Binary::DivU => (x.checked_div(y).ok_or(Trap::DivideByZero)?) & m,
+        Binary::RemU => x.checked_rem(y).ok_or(Trap::DivideByZero)?,
+        Binary::DivS => {
             if y == 0 {
                 return Err(Trap::DivideByZero);
             }
@@ -83,7 +107,7 @@ pub(crate) fn arithmetic(kind: Arithmetic, lhs: Word, rhs: Word) -> Result<Word,
             }
             (a.wrapping_div(b) as u64) & m
         }
-        Arithmetic::RemS => {
+        Binary::RemS => {
             if y == 0 {
                 return Err(Trap::DivideByZero);
             }
@@ -95,30 +119,29 @@ pub(crate) fn arithmetic(kind: Arithmetic, lhs: Word, rhs: Word) -> Result<Word,
                 (a.wrapping_rem(b) as u64) & m
             }
         }
-        Arithmetic::And => x & y,
-        Arithmetic::Or => x | y,
-        Arithmetic::Xor => x ^ y,
-        Arithmetic::Shl => {
+        Binary::And => x & y,
+        Binary::Or => x | y,
+        Binary::Xor => x ^ y,
+        Binary::Shl => {
             let k = (y % u64::from(width)) as u32;
             (x << k) & m
         }
-        Arithmetic::ShrU => {
+        Binary::ShrU => {
             let k = (y % u64::from(width)) as u32;
             (x & m) >> k
         }
-        Arithmetic::ShrS => {
+        Binary::ShrS => {
             let k = (y % u64::from(width)) as u32;
             ((signed(x, width) >> k) as u64) & m
         }
-        Arithmetic::Rotl => rotate(x, y, width, true),
-        Arithmetic::Rotr => rotate(x, y, width, false),
+        Binary::Rotl => rotate(x, y, width, true),
+        Binary::Rotr => rotate(x, y, width, false),
     };
 
     Ok(retag(result, width))
 }
 
-/// Applies a comparison to two same-width operands, yielding an `i32` `0` or `1`.
-pub(crate) fn compare(kind: Compare, lhs: Word, rhs: Word) -> Word {
+fn compare(kind: Compare, lhs: Word, rhs: Word) -> Word {
     let (x, width) = lhs.raw();
     let (y, _) = rhs.raw();
     let truth = match kind {
@@ -136,9 +159,7 @@ pub(crate) fn compare(kind: Compare, lhs: Word, rhs: Word) -> Word {
     Word::I32(u32::from(truth))
 }
 
-/// Applies a unary operator. `eqz` yields an `i32`; the bit-count operators
-/// preserve the operand width.
-pub(crate) fn unary(kind: Unary, operand: Word) -> Word {
+fn unary(kind: Unary, operand: Word) -> Word {
     let (x, width) = operand.raw();
     match kind {
         Unary::Eqz => Word::I32(u32::from(x == 0)),
@@ -218,6 +239,20 @@ fn mask(width: u32) -> u64 {
     }
 }
 
+pub fn sign_extend(raw: u64, bytes: usize, signed: bool, result64: bool) -> Word {
+    let value = if signed && bytes < 8 {
+        let shift = 64 - (bytes as u32 * 8);
+        ((raw << shift) as i64 >> shift) as u64
+    } else {
+        raw
+    };
+    if result64 {
+        Word::I64(value)
+    } else {
+        Word::I32(value as u32)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,23 +264,20 @@ mod tests {
     #[test]
     fn shift_counts_wrap_modulo_width() {
         assert_eq!(
-            arithmetic(Arithmetic::Shl, Word::I32(1), Word::I32(33)),
+            arithmetic(Binary::Shl, Word::I32(1), Word::I32(33)),
             Ok(Word::I32(2))
         );
         assert_eq!(
-            arithmetic(Arithmetic::Shl, Word::I64(1), Word::I64(65)),
+            arithmetic(Binary::Shl, Word::I64(1), Word::I64(65)),
             Ok(Word::I64(2))
         );
     }
 
     #[test]
     fn shr_s_is_arithmetic_while_shr_u_is_logical() {
+        assert_eq!(arithmetic(Binary::ShrS, i32(-2), Word::I32(1)), Ok(i32(-1)));
         assert_eq!(
-            arithmetic(Arithmetic::ShrS, i32(-2), Word::I32(1)),
-            Ok(i32(-1))
-        );
-        assert_eq!(
-            arithmetic(Arithmetic::ShrU, i32(-2), Word::I32(1)),
+            arithmetic(Binary::ShrU, i32(-2), Word::I32(1)),
             Ok(Word::I32(0x7FFF_FFFF))
         );
     }
@@ -253,11 +285,11 @@ mod tests {
     #[test]
     fn rotate_wraps_bits_around_the_width() {
         assert_eq!(
-            arithmetic(Arithmetic::Rotl, Word::I32(0x8000_0000), Word::I32(1)),
+            arithmetic(Binary::Rotl, Word::I32(0x8000_0000), Word::I32(1)),
             Ok(Word::I32(1))
         );
         assert_eq!(
-            arithmetic(Arithmetic::Rotr, Word::I32(1), Word::I32(1)),
+            arithmetic(Binary::Rotr, Word::I32(1), Word::I32(1)),
             Ok(Word::I32(0x8000_0000))
         );
     }
@@ -265,7 +297,7 @@ mod tests {
     #[test]
     fn signed_remainder_of_min_by_minus_one_is_zero() {
         assert_eq!(
-            arithmetic(Arithmetic::RemS, i32(i32::MIN), i32(-1)),
+            arithmetic(Binary::RemS, i32(i32::MIN), i32(-1)),
             Ok(Word::I32(0))
         );
     }
@@ -273,11 +305,11 @@ mod tests {
     #[test]
     fn division_and_remainder_by_zero_trap() {
         assert_eq!(
-            arithmetic(Arithmetic::DivU, Word::I64(7), Word::I64(0)),
+            arithmetic(Binary::DivU, Word::I64(7), Word::I64(0)),
             Err(Trap::DivideByZero)
         );
         assert_eq!(
-            arithmetic(Arithmetic::RemS, Word::I32(7), Word::I32(0)),
+            arithmetic(Binary::RemS, Word::I32(7), Word::I32(0)),
             Err(Trap::DivideByZero)
         );
     }
