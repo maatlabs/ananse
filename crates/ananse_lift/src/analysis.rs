@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
-use ananse_decoder::ModuleInfo;
-use wasmparser::{BlockType, FunctionBody, Operator};
+use ananse_decoder::{Instruction, ModuleInfo};
+use wasmparser::{BlockType, FunctionBody};
 
 use crate::program::{CtrlFrame, Fixup, SuccessorSlot, ValueEffect};
 use crate::{LiftError, LiftedFunction, Register, Result, Schedule, Successors};
@@ -112,8 +112,299 @@ impl<'a> Lifter<'a> {
         }
     }
 
-    fn cur_frame_reachable(&self) -> bool {
-        self.frames.last().map(|f| !f.unreachable).unwrap_or(false)
+    fn step(&mut self, instr: &Instruction, offset: usize) -> Result<()> {
+        use wasmparser::Operator::{
+            Block, Br, BrIf, BrTable, Else, End, If, Loop, Nop, Return, Unreachable,
+        };
+
+        let pc = u32::try_from(self.schedules.len()).map_err(|_| LiftError::FunctionTooLarge {
+            func_index: self.func_index,
+        })?;
+        let height_in = self.height;
+        let reachable = self.cur_frame_reachable();
+
+        match instr {
+            Block { blockty } => {
+                let (in_arity, out_arity) = self.block_arity(blockty)?;
+                self.push_schedule(
+                    pc,
+                    height_in,
+                    Vec::new(),
+                    Vec::new(),
+                    Successors::Fallthrough,
+                );
+                self.push_ctrl_frame(in_arity, out_arity, None, None)?;
+            }
+            Loop { blockty } => {
+                let (in_arity, out_arity) = self.block_arity(blockty)?;
+                self.push_schedule(
+                    pc,
+                    height_in,
+                    Vec::new(),
+                    Vec::new(),
+                    Successors::Fallthrough,
+                );
+                let header = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
+                    func_index: self.func_index,
+                })?;
+                self.push_ctrl_frame(in_arity, out_arity, Some(header), None)?;
+            }
+            If { blockty } => {
+                let (in_arity, out_arity) = self.block_arity(blockty)?;
+                let reads = if reachable {
+                    alloc::vec![self.stack_read(1)?]
+                } else {
+                    Vec::new()
+                };
+                let then_pc = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
+                    func_index: self.func_index,
+                })?;
+                self.push_schedule(
+                    pc,
+                    height_in,
+                    reads,
+                    Vec::new(),
+                    Successors::Branch {
+                        taken: then_pc,
+                        not_taken: PENDING_BRANCH_TARGET,
+                    },
+                );
+                self.pop(1);
+                self.push_ctrl_frame(in_arity, out_arity, None, Some(pc as usize))?;
+            }
+            Else => {
+                let top = self
+                    .frames
+                    .len()
+                    .checked_sub(1)
+                    .ok_or_else(|| LiftError::internal("`else` with no open control frame"))?;
+                let (floor, in_arity, if_instr) = {
+                    let frame = &mut self.frames[top];
+                    (frame.floor, frame.in_arity, frame.if_instr.take())
+                };
+                let if_idx = if_instr
+                    .ok_or_else(|| LiftError::internal("`else` without a matching `if`"))?;
+                let else_body_pc = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
+                    func_index: self.func_index,
+                })?;
+                if let Some(Schedule {
+                    successors: Successors::Branch { not_taken, .. },
+                    ..
+                }) = self.schedules.get_mut(if_idx)
+                {
+                    *not_taken = else_body_pc;
+                }
+                self.push_schedule(
+                    pc,
+                    height_in,
+                    Vec::new(),
+                    Vec::new(),
+                    Successors::Jump(PENDING_BRANCH_TARGET),
+                );
+                self.frames[top].fixups.push(Fixup {
+                    instr_index: pc as usize,
+                    slot: SuccessorSlot::Jump,
+                });
+                self.frames[top].unreachable = false;
+                self.height = floor;
+                self.push(in_arity)?;
+            }
+            End => {
+                self.push_schedule(
+                    pc,
+                    height_in,
+                    Vec::new(),
+                    Vec::new(),
+                    Successors::Fallthrough,
+                );
+                if self.pop_ctrl_frame(pc)?
+                    && let Some(schedule) = self.schedules.get_mut(pc as usize)
+                {
+                    schedule.successors = Successors::Return;
+                }
+            }
+            Br { relative_depth } => {
+                let target =
+                    self.branch_target(*relative_depth, pc as usize, SuccessorSlot::Jump)?;
+                self.push_schedule(
+                    pc,
+                    height_in,
+                    Vec::new(),
+                    Vec::new(),
+                    Successors::Jump(target),
+                );
+                self.mark_unreachable();
+            }
+            BrIf { relative_depth } => {
+                let reads = if reachable {
+                    alloc::vec![self.stack_read(1)?]
+                } else {
+                    Vec::new()
+                };
+                self.pop(1);
+                let taken =
+                    self.branch_target(*relative_depth, pc as usize, SuccessorSlot::BranchTaken)?;
+                let not_taken = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
+                    func_index: self.func_index,
+                })?;
+                self.push_schedule(
+                    pc,
+                    height_in,
+                    reads,
+                    Vec::new(),
+                    Successors::Branch { taken, not_taken },
+                );
+            }
+            BrTable { targets } => {
+                let reads = if reachable {
+                    alloc::vec![self.stack_read(1)?]
+                } else {
+                    Vec::new()
+                };
+                self.pop(1);
+                let mut resolved = Vec::new();
+                for (i, depth) in targets.targets().enumerate() {
+                    let depth = depth.map_err(LiftError::malformed)?;
+                    resolved.push(self.branch_target(
+                        depth,
+                        pc as usize,
+                        SuccessorSlot::TableEntry(i),
+                    )?);
+                }
+                let default = self.branch_target(
+                    targets.default(),
+                    pc as usize,
+                    SuccessorSlot::TableDefault,
+                )?;
+                self.push_schedule(
+                    pc,
+                    height_in,
+                    reads,
+                    Vec::new(),
+                    Successors::Table {
+                        targets: resolved,
+                        default,
+                    },
+                );
+                self.mark_unreachable();
+            }
+            Return => {
+                let reads = if reachable {
+                    self.top_reads(self.result_arity)?
+                } else {
+                    Vec::new()
+                };
+                self.push_schedule(pc, height_in, reads, Vec::new(), Successors::Return);
+                self.mark_unreachable();
+            }
+            Unreachable => {
+                self.push_schedule(pc, height_in, Vec::new(), Vec::new(), Successors::Trap);
+                self.mark_unreachable();
+            }
+            Nop => {
+                self.push_schedule(
+                    pc,
+                    height_in,
+                    Vec::new(),
+                    Vec::new(),
+                    Successors::Fallthrough,
+                );
+            }
+            _ => {
+                let eff = map_instruction_effects(instr, self.info, offset)?;
+                let (reads, writes) = if reachable {
+                    self.value_registers(&eff)?
+                } else {
+                    (Vec::new(), Vec::new())
+                };
+                self.push_schedule(pc, height_in, reads, writes, Successors::Fallthrough);
+                self.pop(eff.pops);
+                self.push(eff.pushes)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn finish(self) -> Result<LiftedFunction> {
+        if !self.frames.is_empty() {
+            return Err(LiftError::internal(
+                "function body ended with an open control frame",
+            ));
+        }
+
+        let width = u64::from(self.locals_count)
+            .checked_add(u64::from(self.globals_count))
+            .and_then(|w| w.checked_add(u64::from(self.max_height)))
+            .ok_or(LiftError::RegisterFileOverflow {
+                func_index: self.func_index,
+                width: u64::MAX,
+            })?;
+        if width > u64::from(MAX_REGISTER_FILE_WIDTH) {
+            return Err(LiftError::RegisterFileOverflow {
+                func_index: self.func_index,
+                width,
+            });
+        }
+        let reg_file_width = u32::try_from(width).map_err(|_| LiftError::RegisterFileOverflow {
+            func_index: self.func_index,
+            width,
+        })?;
+
+        Ok(LiftedFunction {
+            func_index: self.func_index,
+            locals_count: self.locals_count,
+            globals_count: self.globals_count,
+            max_stack_height: self.max_height,
+            reg_file_width,
+            schedules: self.schedules,
+        })
+    }
+
+    fn push_schedule(
+        &mut self,
+        pc: u32,
+        height_in: u32,
+        reads: Vec<Register>,
+        writes: Vec<Register>,
+        successors: Successors,
+    ) {
+        self.schedules.push(Schedule {
+            pc,
+            height_in,
+            reads,
+            writes,
+            successors,
+        });
+    }
+
+    fn push_ctrl_frame(
+        &mut self,
+        in_arity: u32,
+        out_arity: u32,
+        loop_header: Option<u32>,
+        if_instr: Option<usize>,
+    ) -> Result<()> {
+        self.pop(in_arity);
+        let floor = self.height;
+        self.frames.push(CtrlFrame {
+            in_arity,
+            out_arity,
+            floor,
+            unreachable: false,
+            loop_header,
+            fixups: Vec::new(),
+            if_instr,
+        });
+        self.push(in_arity)
+    }
+
+    fn push(&mut self, n: u32) -> Result<()> {
+        (0..n).try_for_each(|_| self.push_one())
+    }
+
+    fn pop(&mut self, n: u32) {
+        (0..n).for_each(|_| self.pop_one());
     }
 
     fn push_one(&mut self) -> Result<()> {
@@ -126,10 +417,6 @@ impl<'a> Lifter<'a> {
             })?;
         self.max_height = self.max_height.max(self.height);
         Ok(())
-    }
-
-    fn push(&mut self, n: u32) -> Result<()> {
-        (0..n).try_for_each(|_| self.push_one())
     }
 
     /// Pops one operand-stack slot, honouring the WASM validation rule that a
@@ -151,73 +438,10 @@ impl<'a> Lifter<'a> {
         }
     }
 
-    fn pop(&mut self, n: u32) {
-        (0..n).for_each(|_| self.pop_one());
-    }
-
-    /// Marks the current frame unreachable, resetting the height to its floor---
-    /// the WASM validation algorithm's treatment of code after an unconditional
-    /// branch, `return`, or `unreachable`.
-    fn mark_unreachable(&mut self) {
-        if let Some(frame) = self.frames.last_mut() {
-            self.height = frame.floor;
-            frame.unreachable = true;
-        }
-    }
-
-    fn push_instr(
-        &mut self,
-        pc: u32,
-        height_in: u32,
-        reads: Vec<Register>,
-        writes: Vec<Register>,
-        successors: Successors,
-    ) {
-        self.schedules.push(Schedule {
-            pc,
-            height_in,
-            reads,
-            writes,
-            successors,
-        });
-    }
-
-    fn block_arity(&self, bt: &BlockType) -> Result<(u32, u32)> {
-        match bt {
-            BlockType::Empty => Ok((0, 0)),
-            BlockType::Type(_) => Ok((0, 1)),
-            BlockType::FuncType(idx) => self
-                .info
-                .type_arity(*idx)
-                .ok_or_else(|| LiftError::internal("block references an undeclared type")),
-        }
-    }
-
-    fn push_ctrl(
-        &mut self,
-        in_arity: u32,
-        out_arity: u32,
-        loop_header: Option<u32>,
-        if_instr: Option<usize>,
-    ) -> Result<()> {
-        self.pop(in_arity);
-        let floor = self.height;
-        self.frames.push(CtrlFrame {
-            in_arity,
-            out_arity,
-            floor,
-            unreachable: false,
-            loop_header,
-            fixups: Vec::new(),
-            if_instr,
-        });
-        self.push(in_arity)
-    }
-
     /// Closes the top frame at the `end` whose program point is `end_pc`.
     ///
     /// Returns `true` when the closed frame was the function frame.
-    fn pop_ctrl(&mut self, end_pc: u32) -> Result<bool> {
+    fn pop_ctrl_frame(&mut self, end_pc: u32) -> Result<bool> {
         let frame = self
             .frames
             .pop()
@@ -277,6 +501,31 @@ impl<'a> Lifter<'a> {
         Ok(self.frames.is_empty())
     }
 
+    fn cur_frame_reachable(&self) -> bool {
+        self.frames.last().map(|f| !f.unreachable).unwrap_or(false)
+    }
+
+    /// Marks the current frame unreachable, resetting the height to its floor---
+    /// the WASM validation algorithm's treatment of code after an unconditional
+    /// branch, `return`, or `unreachable`.
+    fn mark_unreachable(&mut self) {
+        if let Some(frame) = self.frames.last_mut() {
+            self.height = frame.floor;
+            frame.unreachable = true;
+        }
+    }
+
+    fn block_arity(&self, bt: &BlockType) -> Result<(u32, u32)> {
+        match bt {
+            BlockType::Empty => Ok((0, 0)),
+            BlockType::Type(_) => Ok((0, 1)),
+            BlockType::FuncType(idx) => self
+                .info
+                .type_arity(*idx)
+                .ok_or_else(|| LiftError::internal("block references an undeclared type")),
+        }
+    }
+
     /// Resolves a branch to `relative_depth`, returning the target program point
     /// and registering a fixup when the target frame closes forward.
     fn branch_target(
@@ -315,7 +564,7 @@ impl<'a> Lifter<'a> {
         (1..=n).map(|k| self.stack_read(k)).collect()
     }
 
-    fn value_regs(&self, eff: &ValueEffect) -> Result<(Vec<Register>, Vec<Register>)> {
+    fn value_registers(&self, eff: &ValueEffect) -> Result<(Vec<Register>, Vec<Register>)> {
         let mut reads = Vec::new();
         if let Some(reg) = eff.bank_read {
             reads.push(reg);
@@ -344,260 +593,19 @@ impl<'a> Lifter<'a> {
                 writes.push(reg);
             }
         }
+
         Ok((reads, writes))
-    }
-
-    fn step(&mut self, op: &Operator, offset: usize) -> Result<()> {
-        use Operator::{Block, Br, BrIf, BrTable, Else, End, If, Loop, Nop, Return, Unreachable};
-
-        let pc = u32::try_from(self.schedules.len()).map_err(|_| LiftError::FunctionTooLarge {
-            func_index: self.func_index,
-        })?;
-        let height_in = self.height;
-        let reachable = self.cur_frame_reachable();
-
-        match op {
-            Block { blockty } => {
-                let (in_arity, out_arity) = self.block_arity(blockty)?;
-                self.push_instr(
-                    pc,
-                    height_in,
-                    Vec::new(),
-                    Vec::new(),
-                    Successors::Fallthrough,
-                );
-                self.push_ctrl(in_arity, out_arity, None, None)?;
-            }
-            Loop { blockty } => {
-                let (in_arity, out_arity) = self.block_arity(blockty)?;
-                self.push_instr(
-                    pc,
-                    height_in,
-                    Vec::new(),
-                    Vec::new(),
-                    Successors::Fallthrough,
-                );
-                let header = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
-                    func_index: self.func_index,
-                })?;
-                self.push_ctrl(in_arity, out_arity, Some(header), None)?;
-            }
-            If { blockty } => {
-                let (in_arity, out_arity) = self.block_arity(blockty)?;
-                let reads = if reachable {
-                    alloc::vec![self.stack_read(1)?]
-                } else {
-                    Vec::new()
-                };
-                let then_pc = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
-                    func_index: self.func_index,
-                })?;
-                self.push_instr(
-                    pc,
-                    height_in,
-                    reads,
-                    Vec::new(),
-                    Successors::Branch {
-                        taken: then_pc,
-                        not_taken: PENDING_BRANCH_TARGET,
-                    },
-                );
-                self.pop(1);
-                self.push_ctrl(in_arity, out_arity, None, Some(pc as usize))?;
-            }
-            Else => {
-                let top = self
-                    .frames
-                    .len()
-                    .checked_sub(1)
-                    .ok_or_else(|| LiftError::internal("`else` with no open control frame"))?;
-                let (floor, in_arity, if_instr) = {
-                    let frame = &mut self.frames[top];
-                    (frame.floor, frame.in_arity, frame.if_instr.take())
-                };
-                let if_idx = if_instr
-                    .ok_or_else(|| LiftError::internal("`else` without a matching `if`"))?;
-                let else_body = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
-                    func_index: self.func_index,
-                })?;
-                if let Some(Schedule {
-                    successors: Successors::Branch { not_taken, .. },
-                    ..
-                }) = self.schedules.get_mut(if_idx)
-                {
-                    *not_taken = else_body;
-                }
-                self.push_instr(
-                    pc,
-                    height_in,
-                    Vec::new(),
-                    Vec::new(),
-                    Successors::Jump(PENDING_BRANCH_TARGET),
-                );
-                self.frames[top].fixups.push(Fixup {
-                    instr_index: pc as usize,
-                    slot: SuccessorSlot::Jump,
-                });
-                self.frames[top].unreachable = false;
-                self.height = floor;
-                self.push(in_arity)?;
-            }
-            End => {
-                self.push_instr(
-                    pc,
-                    height_in,
-                    Vec::new(),
-                    Vec::new(),
-                    Successors::Fallthrough,
-                );
-                if self.pop_ctrl(pc)?
-                    && let Some(instr) = self.schedules.get_mut(pc as usize)
-                {
-                    instr.successors = Successors::Return;
-                }
-            }
-            Br { relative_depth } => {
-                let target =
-                    self.branch_target(*relative_depth, pc as usize, SuccessorSlot::Jump)?;
-                self.push_instr(
-                    pc,
-                    height_in,
-                    Vec::new(),
-                    Vec::new(),
-                    Successors::Jump(target),
-                );
-                self.mark_unreachable();
-            }
-            BrIf { relative_depth } => {
-                let reads = if reachable {
-                    alloc::vec![self.stack_read(1)?]
-                } else {
-                    Vec::new()
-                };
-                self.pop(1);
-                let taken =
-                    self.branch_target(*relative_depth, pc as usize, SuccessorSlot::BranchTaken)?;
-                let not_taken = pc.checked_add(1).ok_or(LiftError::FunctionTooLarge {
-                    func_index: self.func_index,
-                })?;
-                self.push_instr(
-                    pc,
-                    height_in,
-                    reads,
-                    Vec::new(),
-                    Successors::Branch { taken, not_taken },
-                );
-            }
-            BrTable { targets } => {
-                let reads = if reachable {
-                    alloc::vec![self.stack_read(1)?]
-                } else {
-                    Vec::new()
-                };
-                self.pop(1);
-                let mut resolved = Vec::new();
-                for (i, depth) in targets.targets().enumerate() {
-                    let depth = depth.map_err(LiftError::malformed)?;
-                    resolved.push(self.branch_target(
-                        depth,
-                        pc as usize,
-                        SuccessorSlot::TableEntry(i),
-                    )?);
-                }
-                let default = self.branch_target(
-                    targets.default(),
-                    pc as usize,
-                    SuccessorSlot::TableDefault,
-                )?;
-                self.push_instr(
-                    pc,
-                    height_in,
-                    reads,
-                    Vec::new(),
-                    Successors::Table {
-                        targets: resolved,
-                        default,
-                    },
-                );
-                self.mark_unreachable();
-            }
-            Return => {
-                let reads = if reachable {
-                    self.top_reads(self.result_arity)?
-                } else {
-                    Vec::new()
-                };
-                self.push_instr(pc, height_in, reads, Vec::new(), Successors::Return);
-                self.mark_unreachable();
-            }
-            Unreachable => {
-                self.push_instr(pc, height_in, Vec::new(), Vec::new(), Successors::Trap);
-                self.mark_unreachable();
-            }
-            Nop => {
-                self.push_instr(
-                    pc,
-                    height_in,
-                    Vec::new(),
-                    Vec::new(),
-                    Successors::Fallthrough,
-                );
-            }
-            _ => {
-                let eff = classify_value_op(op, self.info, offset)?;
-                let (reads, writes) = if reachable {
-                    self.value_regs(&eff)?
-                } else {
-                    (Vec::new(), Vec::new())
-                };
-                self.push_instr(pc, height_in, reads, writes, Successors::Fallthrough);
-                self.pop(eff.pops);
-                self.push(eff.pushes)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn finish(self) -> Result<LiftedFunction> {
-        if !self.frames.is_empty() {
-            return Err(LiftError::internal(
-                "function body ended with an open control frame",
-            ));
-        }
-
-        let width = u64::from(self.locals_count)
-            .checked_add(u64::from(self.globals_count))
-            .and_then(|w| w.checked_add(u64::from(self.max_height)))
-            .ok_or(LiftError::RegisterFileOverflow {
-                func_index: self.func_index,
-                width: u64::MAX,
-            })?;
-        if width > u64::from(MAX_REGISTER_FILE_WIDTH) {
-            return Err(LiftError::RegisterFileOverflow {
-                func_index: self.func_index,
-                width,
-            });
-        }
-        let reg_file_width = u32::try_from(width).map_err(|_| LiftError::RegisterFileOverflow {
-            func_index: self.func_index,
-            width,
-        })?;
-
-        Ok(LiftedFunction {
-            func_index: self.func_index,
-            locals_count: self.locals_count,
-            globals_count: self.globals_count,
-            max_stack_height: self.max_height,
-            reg_file_width,
-            schedules: self.schedules,
-        })
     }
 }
 
-fn classify_value_op(op: &Operator, info: &ModuleInfo, offset: usize) -> Result<ValueEffect> {
-    use Operator::*;
+fn map_instruction_effects(
+    instr: &Instruction,
+    info: &ModuleInfo,
+    offset: usize,
+) -> Result<ValueEffect> {
+    use wasmparser::Operator::*;
 
-    let eff = match op {
+    let eff = match instr {
         I32Const { .. } | I64Const { .. } => ValueEffect::stack(0, 1),
 
         LocalGet { local_index } => ValueEffect::bank_read(Register::Local(*local_index)),
@@ -661,5 +669,6 @@ fn classify_value_op(op: &Operator, info: &ModuleInfo, offset: usize) -> Result<
 
         _ => return Err(LiftError::UnsupportedOperator { offset }),
     };
+
     Ok(eff)
 }
