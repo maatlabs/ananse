@@ -1,8 +1,8 @@
 use ananse_decoder::{Image, Instruction, Module, OpCode, WASM32_PAGE_SIZE, Word};
 use ananse_lift::{LiftedFunction, LiftedProgram, Register, Successors, lift};
 
-use crate::record::{Control, Flow, Outcome, RtFrame};
-use crate::value::{Arithmetic, Compare, Unary, arithmetic, compare, unary};
+use crate::operations::{Arithmetic, Compare, Unary, arithmetic, compare, unary};
+use crate::record::{Control, Eval, Outcome, RtFrame};
 use crate::{
     Entry, ExecuteError, Host, HostAction, MemAccess, RegAccess, Result, StepObserver, StepRecord,
     Transition, Trap,
@@ -12,21 +12,21 @@ use crate::{
 /// [`Trap::CallStackExhausted`], bounding host stack use.
 const MAX_CALL_DEPTH: usize = 1024;
 
-/// The outcome of an execution.
+/// The state/outcome of an execution.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Execution {
     /// The entry function's return values, empty if the program exited.
     pub returns: Vec<Word>,
     /// The status code if the program halted through `proc_exit`.
     pub exit: Option<i32>,
-    /// The number of operators executed (records emitted).
+    /// The number of instructions executed (records emitted).
     pub steps: u64,
 }
 
 /// Executes a validated module under its static register schedule.
 ///
 /// The module is lifted to its register schedule and parsed into an executable
-/// image, then interpreted: every operator's register touches are resolved
+/// image, then interpreted: every instruction's register touches are resolved
 /// against the live operand stack, locals, and globals and emitted as a
 /// [`StepRecord`]. At each program point the operand-stack height execution
 /// reaches is checked against the height the schedule predicts; a disagreement
@@ -60,9 +60,10 @@ pub fn execute<O: StepObserver, H: Host>(
     let (params, _) = image
         .func_arity(func_index)
         .ok_or(ExecuteError::UndefinedEntry)?;
-    let call_args = entry_args(&image, func_index, params, args)?;
 
-    let mut interp = Interpreter {
+    let call_args = validate_entry_args(&image, func_index, params, args)?;
+
+    let mut interpreter = Interpreter {
         globals: image.globals.clone(),
         memory: image.memory.clone(),
         max_pages: image.max_pages,
@@ -70,22 +71,28 @@ pub fn execute<O: StepObserver, H: Host>(
         host,
         steps: 0,
     };
-    let flow = interp.run_function(&image, &program, defined, call_args, 0)?;
+    let flow = interpreter.eval(&image, &program, defined, call_args, 0)?;
+
     Ok(match flow {
-        Flow::Return(returns) => Execution {
+        Eval::Return(returns) => Execution {
             returns,
             exit: None,
-            steps: interp.steps,
+            steps: interpreter.steps,
         },
-        Flow::Exit(code) => Execution {
+        Eval::Exit(code) => Execution {
             returns: Vec::new(),
             exit: Some(code),
-            steps: interp.steps,
+            steps: interpreter.steps,
         },
     })
 }
 
-fn entry_args(image: &Image, func_index: u32, params: u32, args: &[Word]) -> Result<Vec<Word>> {
+fn validate_entry_args(
+    image: &Image,
+    func_index: u32,
+    params: u32,
+    args: &[Word],
+) -> Result<Vec<Word>> {
     if args.is_empty() && params > 0 {
         let ty = &image.types[image.func_types[func_index as usize] as usize];
         return Ok(ty.params.iter().map(|t| t.zero()).collect());
@@ -111,32 +118,32 @@ struct Interpreter<'o, O: StepObserver, H: Host> {
 }
 
 impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
-    fn run_function(
+    fn eval(
         &mut self,
         image: &Image,
         program: &LiftedProgram,
         defined: usize,
         args: Vec<Word>,
         depth: usize,
-    ) -> Result<Flow> {
+    ) -> Result<Eval> {
         if depth > MAX_CALL_DEPTH {
             return Err(Trap::CallStackExhausted.into());
         }
 
-        let func = &image.funcs[defined];
-        let lf = &program.functions[defined];
-        let func_index = func.func_index;
-        let result_arity = image.types[func.type_idx as usize].results;
+        let func_image = &image.funcs[defined];
+        let lifted_func = &program.functions[defined];
+        let func_index = func_image.func_index;
+        let result_arity = image.types[func_image.type_idx as usize].results;
 
         let mut locals = args;
-        locals.extend(func.declared.iter().map(|t| t.zero()));
+        locals.extend(func_image.declared.iter().map(|t| t.zero()));
         let mut stack: Vec<Word> = Vec::new();
         let mut frames: Vec<RtFrame> = Vec::new();
         let mut pc = 0usize;
 
         loop {
-            let op = &func.instructions[pc];
-            let sched = &lf.schedules[pc];
+            let instr = &func_image.instructions[pc];
+            let sched = &lifted_func.schedules[pc];
             if stack.len() != sched.height_in as usize {
                 return Err(ExecuteError::ScheduleMismatch {
                     func_index,
@@ -147,7 +154,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
             }
             let reads = resolve(&sched.reads, &stack, &locals, &self.globals)?;
 
-            let outcome = match op {
+            let outcome = match instr {
                 Instruction::Unreachable => return Err(Trap::Unreachable.into()),
                 Instruction::Nop => Outcome::advance(OpCode::Nop, pc + 1),
 
@@ -156,7 +163,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     frames.push(RtFrame {
                         is_loop: false,
                         branch_arity: out,
-                        end_pc: func.ends[pc],
+                        end_pc: func_image.ends[pc],
                     });
                     Outcome::advance(OpCode::Block, pc + 1)
                 }
@@ -165,7 +172,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     frames.push(RtFrame {
                         is_loop: true,
                         branch_arity: input,
-                        end_pc: func.ends[pc],
+                        end_pc: func_image.ends[pc],
                     });
                     Outcome::advance(OpCode::Loop, pc + 1)
                 }
@@ -175,7 +182,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     frames.push(RtFrame {
                         is_loop: false,
                         branch_arity: out,
-                        end_pc: func.ends[pc],
+                        end_pc: func_image.ends[pc],
                     });
                     let Successors::Branch { taken, not_taken } = sched.successors else {
                         return Err(ExecuteError::invalid_binary(
@@ -222,7 +229,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                         &mut frames,
                         *relative_depth,
                         target,
-                        lf,
+                        lifted_func,
                         result_arity,
                     )?;
                     Outcome {
@@ -245,7 +252,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                             &mut frames,
                             *relative_depth,
                             taken,
-                            lf,
+                            lifted_func,
                             result_arity,
                         )?;
                         Outcome {
@@ -279,8 +286,14 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                     } else {
                         (targets.default(), *default)
                     };
-                    let control =
-                        branch_to(&mut stack, &mut frames, depth_to, target, lf, result_arity)?;
+                    let control = branch_to(
+                        &mut stack,
+                        &mut frames,
+                        depth_to,
+                        target,
+                        lifted_func,
+                        result_arity,
+                    )?;
                     Outcome {
                         opcode: OpCode::BrTable,
                         transition: transition_of(&control),
@@ -320,8 +333,8 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                         }
                     } else {
                         let callee = (f - image.num_imported) as usize;
-                        match self.run_function(image, program, callee, call_args, depth + 1)? {
-                            Flow::Return(results) => {
+                        match self.eval(image, program, callee, call_args, depth + 1)? {
+                            Eval::Return(results) => {
                                 stack.extend(results);
                                 Outcome {
                                     opcode: OpCode::Call,
@@ -333,7 +346,7 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
                                     control: Control::Advance(pc + 1),
                                 }
                             }
-                            Flow::Exit(code) => Outcome {
+                            Eval::Exit(code) => Outcome {
                                 opcode: OpCode::Call,
                                 transition: Transition::Exit(code),
                                 mem: Vec::new(),
@@ -586,8 +599,8 @@ impl<O: StepObserver, H: Host> Interpreter<'_, O, H> {
             });
             match outcome.control {
                 Control::Advance(next) => pc = next,
-                Control::Return(results) => return Ok(Flow::Return(results)),
-                Control::Exit(code) => return Ok(Flow::Exit(code)),
+                Control::Return(results) => return Ok(Eval::Return(results)),
+                Control::Exit(code) => return Ok(Eval::Exit(code)),
             }
         }
     }

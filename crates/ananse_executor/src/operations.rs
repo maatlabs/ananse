@@ -2,8 +2,8 @@ use ananse_decoder::Word;
 
 use crate::Trap;
 
-/// A two-operand integer operator, abstract over the `i32` / `i64` width carried
-/// by its operands.
+/// A two-operand (binary) integer operation, abstract over the `i32` / `i64`
+/// width carried by its operands.
 #[derive(Clone, Copy)]
 pub(crate) enum Arithmetic {
     Add,
@@ -23,7 +23,7 @@ pub(crate) enum Arithmetic {
     Rotr,
 }
 
-/// A two-operand integer comparison, producing an `i32` boolean.
+/// A two-operand (binary) integer comparison, producing an `i32` boolean.
 #[derive(Clone, Copy)]
 pub(crate) enum Compare {
     Eq,
@@ -38,20 +38,31 @@ pub(crate) enum Compare {
     GeU,
 }
 
-/// A single-operand integer operator.
+/// A single-operand integer operation.
 #[derive(Clone, Copy)]
 pub(crate) enum Unary {
+    /// "Equal to zero". Pops a value, pushes 1 if it was 0, else pushes 0.
     Eqz,
+    /// "Count leading zeros". Counts how many zero bits are at the
+    /// most-significant end before the first 1 bit.
     Clz,
+    /// "Count trailing zeros". Counts zero bits starting from the
+    /// least-significant end until the first 1.
     Ctz,
+    /// "Population count". Counts the total number of 1 bits in the value,
+    /// regardless of position.
     Popcnt,
 }
 
 /// Applies a binary arithmetic or bitwise operator to two same-width operands.
 ///
+/// Shift and rotate counts are reduced modulo the operand width,
+/// matching the WebAssembly specification.
+///
+/// # Errors
+///
 /// Division and remainder trap on a zero divisor; signed division traps on the
-/// `MIN / -1` overflow. Shift and rotate counts are reduced modulo the operand
-/// width, matching the WebAssembly specification.
+/// `MIN / -1` overflow.
 pub(crate) fn arithmetic(kind: Arithmetic, lhs: Word, rhs: Word) -> Result<Word, Trap> {
     let (x, width) = lhs.raw();
     let (y, _) = rhs.raw();
@@ -102,6 +113,7 @@ pub(crate) fn arithmetic(kind: Arithmetic, lhs: Word, rhs: Word) -> Result<Word,
         Arithmetic::Rotl => rotate(x, y, width, true),
         Arithmetic::Rotr => rotate(x, y, width, false),
     };
+
     Ok(retag(result, width))
 }
 

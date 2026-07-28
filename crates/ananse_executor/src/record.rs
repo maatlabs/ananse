@@ -54,7 +54,7 @@ impl Entry {
 
 /// A sink for the [`StepRecord`] stream an execution emits.
 pub trait StepObserver {
-    /// Receives the next executed operator's record.
+    /// Receives the next executed instruction's record.
     fn observe(&mut self, step: StepRecord);
 }
 
@@ -70,25 +70,25 @@ impl StepObserver for Vec<StepRecord> {
     }
 }
 
-/// The observable effect of executing one WebAssembly operator.
+/// The observable effect of executing one WebAssembly instruction.
 ///
-/// One record is emitted per executed operator, in execution order.
+/// One record is emitted per executed instruction, in execution order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StepRecord {
     /// The executing function's index in the module function index space.
     pub func_index: u32,
-    /// The operator's program point within its function body.
+    /// The instruction's program point within its function body.
     pub pc: u32,
-    /// The operator's identity.
+    /// The instruction's identity.
     pub opcode: OpCode,
-    /// Registers read, in the order the operator consumes them (top of the
+    /// Registers read, in the order the instruction consumes them (top of the
     /// operand stack first), each resolved to its value.
     pub reads: Vec<RegAccess>,
     /// Registers written, each resolved to its post-execution value.
     pub writes: Vec<RegAccess>,
-    /// Linear-memory accesses the operator performed.
+    /// Linear-memory accesses the instruction performed.
     pub memory: Vec<MemAccess>,
-    /// The control-flow transition the operator took.
+    /// The control-flow transition the instruction took.
     pub transition: Transition,
 }
 
@@ -139,7 +139,7 @@ pub enum Transition {
     Exit(i32),
 }
 
-/// The record-bearing result of executing one operator.
+/// The record-bearing result of executing one instruction.
 pub(crate) struct Outcome {
     pub(crate) opcode: OpCode,
     pub(crate) transition: Transition,
@@ -158,15 +158,15 @@ impl Outcome {
     }
 }
 
-/// What executing a single operator produced.
+/// What executing a single instruction produced.
 pub(crate) enum Control {
     Advance(usize),
     Return(Vec<Word>),
     Exit(i32),
 }
 
-/// What a function activation produced.
-pub(crate) enum Flow {
+/// What a function evaluation produced.
+pub(crate) enum Eval {
     Return(Vec<Word>),
     Exit(i32),
 }

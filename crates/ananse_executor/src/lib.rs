@@ -1,21 +1,21 @@
-//! Register-schedule interpreter for the Ananse zkVM.
+//! Schedule-driven interpreter and reference semantics for the Ananse zkVM.
 //!
 //! Ananse proves WebAssembly directly against a register-shaped AIR. This crate
 //! executes a validated [`Module`](ananse_decoder::Module) under the static
-//! register schedule [`ananse_lift`] produces and emits, per executed operator, the
+//! register schedule [`ananse_lift`] produces and emits, per executed instruction, the
 //! [`StepRecord`] every later AIR family consumes.
 
 #![forbid(unsafe_code)]
 
 mod error;
-mod interp;
+mod interpreter;
+mod operations;
 mod record;
-mod value;
 
 use ananse_decoder::ImportEntry;
 pub use ananse_decoder::{OpCode, Word};
 pub use error::{ExecuteError, Trap};
-pub use interp::{Execution, execute};
+pub use interpreter::{Execution, execute};
 pub use record::{Entry, MemAccess, RegAccess, StepObserver, StepRecord, Transition};
 
 /// Result of module execution operations.
