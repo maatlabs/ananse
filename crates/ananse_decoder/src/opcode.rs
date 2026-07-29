@@ -250,4 +250,67 @@ impl OpCode {
             _ => (0, false, false),
         }
     }
+
+    pub fn is_binary_compare(&self) -> bool {
+        matches!(
+            self,
+            Self::I32Eq
+                | Self::I32Ne
+                | Self::I32LtS
+                | Self::I32LtU
+                | Self::I32GtS
+                | Self::I32GtU
+                | Self::I32LeS
+                | Self::I32LeU
+                | Self::I32GeS
+                | Self::I32GeU
+                | Self::I64Eq
+                | Self::I64Ne
+                | Self::I64LtS
+                | Self::I64LtU
+                | Self::I64GtS
+                | Self::I64GtU
+                | Self::I64LeS
+                | Self::I64LeU
+                | Self::I64GeS
+                | Self::I64GeU
+        )
+    }
+
+    pub fn is_signed_compare(&self) -> bool {
+        matches!(
+            self,
+            Self::I32LtS
+                | Self::I32GtS
+                | Self::I32LeS
+                | Self::I32GeS
+                | Self::I64LtS
+                | Self::I64GtS
+                | Self::I64LeS
+                | Self::I64GeS
+        )
+    }
+
+    pub fn is_i64_compare(&self) -> bool {
+        matches!(
+            self,
+            Self::I64Eq
+                | Self::I64Ne
+                | Self::I64LtS
+                | Self::I64LtU
+                | Self::I64GtS
+                | Self::I64GtU
+                | Self::I64LeS
+                | Self::I64LeU
+                | Self::I64GeS
+                | Self::I64GeU
+        )
+    }
+
+    pub fn is_bitwise(&self) -> bool {
+        matches!(
+            self,
+            Self::I32And | Self::I32Or | Self::I32Xor | Self::I64And | Self::I64Or | Self::I64Xor
+        )
+    }
 }

@@ -26,6 +26,29 @@ pub struct LiftedFunction {
     pub schedules: Vec<Schedule>,
 }
 
+impl LiftedFunction {
+    /// An upper bound on the program ROM's edge count: one edge per successor target at
+    /// every program point, one extra per point for a possible call-to-halt edge, and
+    /// the halt self-loop.
+    pub fn edge_count(&self) -> usize {
+        let targets = self
+            .schedules
+            .iter()
+            .map(|sched| match &sched.successors {
+                Successors::Fallthrough
+                | Successors::Jump(_)
+                | Successors::Return
+                | Successors::Trap => 1,
+                Successors::Branch { .. } => 2,
+                Successors::Table { targets, .. } => targets.len().saturating_add(1),
+            })
+            .sum::<usize>();
+        targets
+            .saturating_add(self.schedules.len())
+            .saturating_add(1)
+    }
+}
+
 /// The static schedule for a single WebAssembly instruction.
 ///
 /// A single instruction schedule is emitted per operator/instruction in body order,

@@ -1,10 +1,10 @@
-//! One-hot opcode selectors: the mapping from a WebAssembly operator to the
+//! One-hot opcode selectors: the mapping from a WebAssembly instruction to the
 //! trace column that fires on its block.
 
 use ananse_executor::OpCode;
 
 /// Number of operators in Ananse's integer subset of WebAssembly, one per
-/// [`OpCode`] variant. Each operator owns a dedicated one-hot selector column so
+/// [`OpCode`] variant. Each instruction owns a dedicated one-hot selector column so
 /// the register-AIR can gate its per-opcode constraint on exactly its own blocks.
 pub const NUM_OPCODES: usize = 103;
 
@@ -12,10 +12,10 @@ pub const NUM_OPCODES: usize = 103;
 /// per-opcode selectors.
 pub const SEL_PADDING: usize = NUM_OPCODES;
 
-/// Number of selector columns: one per operator plus the padding selector.
+/// Number of selector columns: one per instruction plus the padding selector.
 pub const NUM_SELECTORS: usize = NUM_OPCODES + 1;
 
-/// The one-hot selector index of an operator, in `[0, NUM_OPCODES)`.
+/// The one-hot selector index of an instruction, in `[0, NUM_OPCODES)`.
 pub fn opcode_index(opcode: OpCode) -> usize {
     match opcode {
         OpCode::Unreachable => 0,
