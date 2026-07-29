@@ -1,7 +1,8 @@
 use ananse_decoder::{OpCode, Word};
 
-use crate::record::Outcome;
-use crate::{Result, Trap, memory};
+use super::signal::StepOutcome;
+use crate::runtime::OperandStack;
+use crate::{Result, Trap};
 
 /// A two-operand (binary) integer arithmetic, abstract over the `i32` / `i64`
 /// width carried by its operands.
@@ -64,27 +65,42 @@ pub(crate) enum Unary {
 ///
 /// Division and remainder trap on a zero divisor; signed division traps on the
 /// `MIN / -1` overflow.
-pub fn binop(stack: &mut Vec<Word>, kind: Binary, opcode: OpCode, pc: usize) -> Result<Outcome> {
-    let rhs = memory::stack_pop(stack)?;
-    let lhs = memory::stack_pop(stack)?;
+pub fn binop(
+    stack: &mut OperandStack,
+    kind: Binary,
+    opcode: OpCode,
+    pc: usize,
+) -> Result<StepOutcome> {
+    let rhs = stack.pop()?;
+    let lhs = stack.pop()?;
     stack.push(arithmetic(kind, lhs, rhs)?);
-    Ok(Outcome::advance(opcode, pc + 1))
+    Ok(StepOutcome::advance(opcode, pc + 1))
 }
 
 /// Applies a comparison to two same-width operands, yielding an `i32` `0` or `1`.
-pub fn cmpop(stack: &mut Vec<Word>, kind: Compare, opcode: OpCode, pc: usize) -> Result<Outcome> {
-    let rhs = memory::stack_pop(stack)?;
-    let lhs = memory::stack_pop(stack)?;
+pub fn cmpop(
+    stack: &mut OperandStack,
+    kind: Compare,
+    opcode: OpCode,
+    pc: usize,
+) -> Result<StepOutcome> {
+    let rhs = stack.pop()?;
+    let lhs = stack.pop()?;
     stack.push(compare(kind, lhs, rhs));
-    Ok(Outcome::advance(opcode, pc + 1))
+    Ok(StepOutcome::advance(opcode, pc + 1))
 }
 
 /// Applies a unary operator. `eqz` yields an `i32`; the bit-count operators
 /// preserve the operand width.
-pub fn unop(stack: &mut Vec<Word>, kind: Unary, opcode: OpCode, pc: usize) -> Result<Outcome> {
-    let operand = memory::stack_pop(stack)?;
+pub fn unop(
+    stack: &mut OperandStack,
+    kind: Unary,
+    opcode: OpCode,
+    pc: usize,
+) -> Result<StepOutcome> {
+    let operand = stack.pop()?;
     stack.push(unary(kind, operand));
-    Ok(Outcome::advance(opcode, pc + 1))
+    Ok(StepOutcome::advance(opcode, pc + 1))
 }
 
 fn arithmetic(kind: Binary, lhs: Word, rhs: Word) -> core::result::Result<Word, Trap> {
