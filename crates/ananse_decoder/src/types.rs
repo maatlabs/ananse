@@ -58,6 +58,14 @@ impl Word {
             Self::I64(bits) => (bits, 64),
         }
     }
+
+    /// Returns the bit pattern of this value as `u32`.
+    pub fn as_u32(self) -> u32 {
+        match self {
+            Self::I32(bits) => bits,
+            Self::I64(bits) => bits as u32,
+        }
+    }
 }
 
 /// A value type in Ananse's integer subset.
