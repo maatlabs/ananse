@@ -120,16 +120,16 @@ Ananse's development follows a phased milestone plan.
 | Release    | Focus                                                                                                                       | Status      |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------- | ----------- |
 | **v0.1.x** | Minimal WASM runtime + workspace bootstrap                                                                                  | Complete    |
-| **v0.2.0** | Executable VM: decode -> lift -> execute -> journal over the integer subset, CLI, register-AIR built and constraint-checked | **Current** |
+| **v0.2.x** | Executable VM: decode -> lift -> execute -> journal over the integer subset, CLI, register-AIR built and constraint-checked | **Current** |
 | **v0.3.0** | FRI STARK prover and `prove` / `verify` CLI subcommands                                                                     | Planned     |
 
 ## Status
 
-The current version is `0.2.0`. It executes any program in the integer subset of WebAssembly-MVP through the full `decode -> lift -> execute -> journal` pipeline and exposes it behind the `ananse run` command and a library `Runtime`. It does not yet produce proofs: the FRI STARK prover and the `prove` / `verify` flow are the focus of the next release.
+The current version is `0.2.1`. It executes any program in the integer subset of WebAssembly-MVP through the full `decode -> lift -> execute -> journal` pipeline and exposes it behind the `ananse run` command and a library `Runtime`. It does not yet produce proofs: the FRI STARK prover and the `prove` / `verify` flow are the focus of the next release.
 
 ## Disclaimer
 
-Early adopters should be aware that Ananse `0.2.0` is a step toward Ananse 1.0, for which a formal audit process is expected. In the meantime, we invite you to explore and experiment with the project, but we do not recommend using it to build mission-critical systems.
+Early adopters should be aware that Ananse `0.2.1` is a step toward Ananse 1.0, for which a formal audit process is expected. In the meantime, we invite you to explore and experiment with the project, but we do not recommend using it to build mission-critical systems.
 
 ## Acknowledgments
 
