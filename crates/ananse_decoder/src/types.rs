@@ -1,10 +1,9 @@
-use p3_goldilocks::Goldilocks as Felt;
 use wasmparser::{
-    BlockType, CompositeInnerType, ConstExpr, DataKind, FunctionBody, Imports, Operator, Parser,
-    Payload, TypeRef, ValType,
+    BlockType, CompositeInnerType, ConstExpr, DataKind, ExternalKind, FunctionBody, Imports,
+    Parser, Payload, TypeRef, ValType,
 };
 
-use crate::{DecodeError, Result, WASM32_PAGE_SIZE};
+use crate::{DecodeError, Felt, Instruction, Result, WASM32_PAGE_SIZE};
 
 /// A WebAssembly integer value, held as its unsigned bit pattern.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -21,8 +20,8 @@ impl Word {
     pub fn from_const_expr(expr: &ConstExpr) -> Result<Self> {
         let mut reader = expr.get_operators_reader();
         let value = match reader.read().map_err(DecodeError::invalid_binary)? {
-            Operator::I32Const { value } => Self::I32(value as u32),
-            Operator::I64Const { value } => Self::I64(value as u64),
+            Instruction::I32Const { value } => Self::I32(value as u32),
+            Instruction::I64Const { value } => Self::I64(value as u64),
             _ => {
                 return Err(DecodeError::internal("unsupported constant initializer"));
             }
@@ -59,6 +58,14 @@ impl Word {
             Self::I64(bits) => (bits, 64),
         }
     }
+
+    /// Returns the bit pattern of this value as `u32`.
+    pub fn as_u32(self) -> u32 {
+        match self {
+            Self::I32(bits) => bits,
+            Self::I64(bits) => bits as u32,
+        }
+    }
 }
 
 /// A value type in Ananse's integer subset.
@@ -77,7 +84,7 @@ impl WordType {
         }
     }
 
-    /// Convert from [`wasmparser::ValType`] to `Self`.
+    /// Convert from [`ValType`] to `Self`.
     pub fn from_val_ty(ty: ValType) -> Result<Self> {
         match ty {
             ValType::I32 => Ok(Self::I32),
@@ -169,7 +176,7 @@ pub struct FuncImage<'a> {
     pub func_index: u32,
     pub type_idx: u32,
     pub declared: Vec<WordType>,
-    pub ops: Vec<Operator<'a>>,
+    pub instructions: Vec<Instruction<'a>>,
     /// `ends[pc]` is the `end` program point of the `block` / `loop` / `if` that
     /// opens at `pc`; `0` for every other program point.
     pub ends: Vec<u32>,
@@ -197,18 +204,18 @@ impl<'a> FuncImage<'a> {
         let mut reader = body
             .get_operators_reader()
             .map_err(DecodeError::invalid_binary)?;
-        let mut ops = Vec::new();
+        let mut instructions = Vec::new();
         while !reader.eof() {
-            ops.push(reader.read().map_err(DecodeError::invalid_binary)?);
+            instructions.push(reader.read().map_err(DecodeError::invalid_binary)?);
         }
 
-        let ends = block_ends(&ops)?;
+        let ends = block_ends(&instructions)?;
 
         Ok(Self {
             func_index: index,
             type_idx,
             declared,
-            ops,
+            instructions,
             ends,
         })
     }
@@ -281,7 +288,7 @@ impl<'a> Image<'a> {
                 Payload::ExportSection(reader) => {
                     for export in reader {
                         let export = export.map_err(DecodeError::invalid_binary)?;
-                        if matches!(export.kind, wasmparser::ExternalKind::Func) {
+                        if matches!(export.kind, ExternalKind::Func) {
                             func_exports.push((export.name.into(), export.index));
                         }
                     }
@@ -336,8 +343,8 @@ impl<'a> Image<'a> {
     }
 
     /// The `(input arity, result arity)` of a block type.
-    pub fn block_arity(&self, blockty: &BlockType) -> Result<(u32, u32)> {
-        match blockty {
+    pub fn block_arity(&self, ty: &BlockType) -> Result<(u32, u32)> {
+        match ty {
             BlockType::Empty => Ok((0, 0)),
             BlockType::Type(_) => Ok((0, 1)),
             BlockType::FuncType(idx) => {
@@ -356,13 +363,15 @@ impl<'a> Image<'a> {
 }
 
 /// Maps each structured block opening to its matching `end` program point.
-fn block_ends(ops: &[Operator]) -> Result<Vec<u32>> {
-    let mut ends = vec![0u32; ops.len()];
+fn block_ends(instructions: &[Instruction]) -> Result<Vec<u32>> {
+    let mut ends = vec![0u32; instructions.len()];
     let mut open: Vec<usize> = Vec::new();
-    for (pc, op) in ops.iter().enumerate() {
-        match op {
-            Operator::Block { .. } | Operator::Loop { .. } | Operator::If { .. } => open.push(pc),
-            Operator::End => {
+    for (pc, inst) in instructions.iter().enumerate() {
+        match inst {
+            Instruction::Block { .. } | Instruction::Loop { .. } | Instruction::If { .. } => {
+                open.push(pc)
+            }
+            Instruction::End => {
                 if let Some(start) = open.pop() {
                     ends[start] = u32::try_from(pc)
                         .map_err(|_| DecodeError::internal("function body too large"))?;

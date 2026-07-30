@@ -4,7 +4,7 @@
 //! into a single flat address space and proves every access consistent through one
 //! argument: an address-sorted access log permuted against the execution-order
 //! accesses. A trace row is therefore not a snapshot of a register file but a
-//! record of the accesses one operator performed, carried on a fixed-width *value
+//! record of the accesses one instruction performed, carried on a fixed-width *value
 //! bus*, plus the sorted-log view the permutation runs over.
 //!
 //! The main-trace columns are laid out in five contiguous groups, low index to
@@ -40,16 +40,16 @@ pub const BUS_SLOTS: usize = 4;
 /// First byte address of the register file.
 pub const REGISTER_REGION: u64 = 1 << 32;
 
-/// Program counter: the operator's index within its function body.
+/// Program counter: the instruction's index within its function body.
 pub const COL_PC: usize = 0;
 /// Row clock: the zero-based row index.
 pub const COL_CLK: usize = 1;
 /// Base address of the executing activation's register frame. Zero for a single call frame.
 pub const COL_FRAME_BASE: usize = 2;
-/// Operand-stack height entering the operator.
+/// Operand-stack height entering the instruction.
 pub const COL_HEIGHT: usize = 3;
-/// Register-file offset of the local or global slot the operator touches, or zero
-/// for operators that touch none.
+/// Register-file offset of the local or global slot the instruction touches, or
+/// zero for operators that touch none.
 pub const COL_IMM: usize = 4;
 
 /// First column of the execution-order value bus.

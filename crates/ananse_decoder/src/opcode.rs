@@ -1,8 +1,6 @@
-use wasmparser::Operator;
+use crate::{DecodeError, Instruction, Result};
 
-use crate::{DecodeError, Result};
-
-/// The identity of a WebAssembly operator, stripped of its immediate operands.
+/// The identity of a WebAssembly instruction, stripped of its immediate operands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[allow(missing_docs)]
 pub enum OpCode {
@@ -118,113 +116,112 @@ pub enum OpCode {
 }
 
 impl OpCode {
-    /// Maps a WebAssembly instruction (i.e., a validated [Operator]) onto its
-    /// corresponding [`OpCode`].
-    pub fn from_operator(op: &Operator) -> Result<OpCode> {
-        let opcode = match op {
-            Operator::Unreachable => OpCode::Unreachable,
-            Operator::Nop => OpCode::Nop,
-            Operator::Block { .. } => OpCode::Block,
-            Operator::Loop { .. } => OpCode::Loop,
-            Operator::If { .. } => OpCode::If,
-            Operator::Else => OpCode::Else,
-            Operator::End => OpCode::End,
-            Operator::Br { .. } => OpCode::Br,
-            Operator::BrIf { .. } => OpCode::BrIf,
-            Operator::BrTable { .. } => OpCode::BrTable,
-            Operator::Return => OpCode::Return,
-            Operator::Call { .. } => OpCode::Call,
-            Operator::Drop => OpCode::Drop,
-            Operator::Select => OpCode::Select,
-            Operator::LocalGet { .. } => OpCode::LocalGet,
-            Operator::LocalSet { .. } => OpCode::LocalSet,
-            Operator::LocalTee { .. } => OpCode::LocalTee,
-            Operator::GlobalGet { .. } => OpCode::GlobalGet,
-            Operator::GlobalSet { .. } => OpCode::GlobalSet,
-            Operator::I32Const { .. } => OpCode::I32Const,
-            Operator::I64Const { .. } => OpCode::I64Const,
-            Operator::I32Load { .. } => OpCode::I32Load,
-            Operator::I64Load { .. } => OpCode::I64Load,
-            Operator::I32Load8S { .. } => OpCode::I32Load8S,
-            Operator::I32Load8U { .. } => OpCode::I32Load8U,
-            Operator::I32Load16S { .. } => OpCode::I32Load16S,
-            Operator::I32Load16U { .. } => OpCode::I32Load16U,
-            Operator::I64Load8S { .. } => OpCode::I64Load8S,
-            Operator::I64Load8U { .. } => OpCode::I64Load8U,
-            Operator::I64Load16S { .. } => OpCode::I64Load16S,
-            Operator::I64Load16U { .. } => OpCode::I64Load16U,
-            Operator::I64Load32S { .. } => OpCode::I64Load32S,
-            Operator::I64Load32U { .. } => OpCode::I64Load32U,
-            Operator::I32Store { .. } => OpCode::I32Store,
-            Operator::I64Store { .. } => OpCode::I64Store,
-            Operator::I32Store8 { .. } => OpCode::I32Store8,
-            Operator::I32Store16 { .. } => OpCode::I32Store16,
-            Operator::I64Store8 { .. } => OpCode::I64Store8,
-            Operator::I64Store16 { .. } => OpCode::I64Store16,
-            Operator::I64Store32 { .. } => OpCode::I64Store32,
-            Operator::MemorySize { .. } => OpCode::MemorySize,
-            Operator::MemoryGrow { .. } => OpCode::MemoryGrow,
-            Operator::I32Eqz => OpCode::I32Eqz,
-            Operator::I32Eq => OpCode::I32Eq,
-            Operator::I32Ne => OpCode::I32Ne,
-            Operator::I32LtS => OpCode::I32LtS,
-            Operator::I32LtU => OpCode::I32LtU,
-            Operator::I32GtS => OpCode::I32GtS,
-            Operator::I32GtU => OpCode::I32GtU,
-            Operator::I32LeS => OpCode::I32LeS,
-            Operator::I32LeU => OpCode::I32LeU,
-            Operator::I32GeS => OpCode::I32GeS,
-            Operator::I32GeU => OpCode::I32GeU,
-            Operator::I64Eqz => OpCode::I64Eqz,
-            Operator::I64Eq => OpCode::I64Eq,
-            Operator::I64Ne => OpCode::I64Ne,
-            Operator::I64LtS => OpCode::I64LtS,
-            Operator::I64LtU => OpCode::I64LtU,
-            Operator::I64GtS => OpCode::I64GtS,
-            Operator::I64GtU => OpCode::I64GtU,
-            Operator::I64LeS => OpCode::I64LeS,
-            Operator::I64LeU => OpCode::I64LeU,
-            Operator::I64GeS => OpCode::I64GeS,
-            Operator::I64GeU => OpCode::I64GeU,
-            Operator::I32Clz => OpCode::I32Clz,
-            Operator::I32Ctz => OpCode::I32Ctz,
-            Operator::I32Popcnt => OpCode::I32Popcnt,
-            Operator::I32Add => OpCode::I32Add,
-            Operator::I32Sub => OpCode::I32Sub,
-            Operator::I32Mul => OpCode::I32Mul,
-            Operator::I32DivS => OpCode::I32DivS,
-            Operator::I32DivU => OpCode::I32DivU,
-            Operator::I32RemS => OpCode::I32RemS,
-            Operator::I32RemU => OpCode::I32RemU,
-            Operator::I32And => OpCode::I32And,
-            Operator::I32Or => OpCode::I32Or,
-            Operator::I32Xor => OpCode::I32Xor,
-            Operator::I32Shl => OpCode::I32Shl,
-            Operator::I32ShrS => OpCode::I32ShrS,
-            Operator::I32ShrU => OpCode::I32ShrU,
-            Operator::I32Rotl => OpCode::I32Rotl,
-            Operator::I32Rotr => OpCode::I32Rotr,
-            Operator::I64Clz => OpCode::I64Clz,
-            Operator::I64Ctz => OpCode::I64Ctz,
-            Operator::I64Popcnt => OpCode::I64Popcnt,
-            Operator::I64Add => OpCode::I64Add,
-            Operator::I64Sub => OpCode::I64Sub,
-            Operator::I64Mul => OpCode::I64Mul,
-            Operator::I64DivS => OpCode::I64DivS,
-            Operator::I64DivU => OpCode::I64DivU,
-            Operator::I64RemS => OpCode::I64RemS,
-            Operator::I64RemU => OpCode::I64RemU,
-            Operator::I64And => OpCode::I64And,
-            Operator::I64Or => OpCode::I64Or,
-            Operator::I64Xor => OpCode::I64Xor,
-            Operator::I64Shl => OpCode::I64Shl,
-            Operator::I64ShrS => OpCode::I64ShrS,
-            Operator::I64ShrU => OpCode::I64ShrU,
-            Operator::I64Rotl => OpCode::I64Rotl,
-            Operator::I64Rotr => OpCode::I64Rotr,
-            Operator::I32WrapI64 => OpCode::I32WrapI64,
-            Operator::I64ExtendI32S => OpCode::I64ExtendI32S,
-            Operator::I64ExtendI32U => OpCode::I64ExtendI32U,
+    /// Maps a WebAssembly [Instruction] onto its corresponding [`OpCode`].
+    pub fn from_instruction(i: &Instruction) -> Result<Self> {
+        let opcode = match i {
+            Instruction::Unreachable => Self::Unreachable,
+            Instruction::Nop => Self::Nop,
+            Instruction::Block { .. } => Self::Block,
+            Instruction::Loop { .. } => Self::Loop,
+            Instruction::If { .. } => Self::If,
+            Instruction::Else => Self::Else,
+            Instruction::End => Self::End,
+            Instruction::Br { .. } => Self::Br,
+            Instruction::BrIf { .. } => Self::BrIf,
+            Instruction::BrTable { .. } => Self::BrTable,
+            Instruction::Return => Self::Return,
+            Instruction::Call { .. } => Self::Call,
+            Instruction::Drop => Self::Drop,
+            Instruction::Select => Self::Select,
+            Instruction::LocalGet { .. } => Self::LocalGet,
+            Instruction::LocalSet { .. } => Self::LocalSet,
+            Instruction::LocalTee { .. } => Self::LocalTee,
+            Instruction::GlobalGet { .. } => Self::GlobalGet,
+            Instruction::GlobalSet { .. } => Self::GlobalSet,
+            Instruction::I32Const { .. } => Self::I32Const,
+            Instruction::I64Const { .. } => Self::I64Const,
+            Instruction::I32Load { .. } => Self::I32Load,
+            Instruction::I64Load { .. } => Self::I64Load,
+            Instruction::I32Load8S { .. } => Self::I32Load8S,
+            Instruction::I32Load8U { .. } => Self::I32Load8U,
+            Instruction::I32Load16S { .. } => Self::I32Load16S,
+            Instruction::I32Load16U { .. } => Self::I32Load16U,
+            Instruction::I64Load8S { .. } => Self::I64Load8S,
+            Instruction::I64Load8U { .. } => Self::I64Load8U,
+            Instruction::I64Load16S { .. } => Self::I64Load16S,
+            Instruction::I64Load16U { .. } => Self::I64Load16U,
+            Instruction::I64Load32S { .. } => Self::I64Load32S,
+            Instruction::I64Load32U { .. } => Self::I64Load32U,
+            Instruction::I32Store { .. } => Self::I32Store,
+            Instruction::I64Store { .. } => Self::I64Store,
+            Instruction::I32Store8 { .. } => Self::I32Store8,
+            Instruction::I32Store16 { .. } => Self::I32Store16,
+            Instruction::I64Store8 { .. } => Self::I64Store8,
+            Instruction::I64Store16 { .. } => Self::I64Store16,
+            Instruction::I64Store32 { .. } => Self::I64Store32,
+            Instruction::MemorySize { .. } => Self::MemorySize,
+            Instruction::MemoryGrow { .. } => Self::MemoryGrow,
+            Instruction::I32Eqz => Self::I32Eqz,
+            Instruction::I32Eq => Self::I32Eq,
+            Instruction::I32Ne => Self::I32Ne,
+            Instruction::I32LtS => Self::I32LtS,
+            Instruction::I32LtU => Self::I32LtU,
+            Instruction::I32GtS => Self::I32GtS,
+            Instruction::I32GtU => Self::I32GtU,
+            Instruction::I32LeS => Self::I32LeS,
+            Instruction::I32LeU => Self::I32LeU,
+            Instruction::I32GeS => Self::I32GeS,
+            Instruction::I32GeU => Self::I32GeU,
+            Instruction::I64Eqz => Self::I64Eqz,
+            Instruction::I64Eq => Self::I64Eq,
+            Instruction::I64Ne => Self::I64Ne,
+            Instruction::I64LtS => Self::I64LtS,
+            Instruction::I64LtU => Self::I64LtU,
+            Instruction::I64GtS => Self::I64GtS,
+            Instruction::I64GtU => Self::I64GtU,
+            Instruction::I64LeS => Self::I64LeS,
+            Instruction::I64LeU => Self::I64LeU,
+            Instruction::I64GeS => Self::I64GeS,
+            Instruction::I64GeU => Self::I64GeU,
+            Instruction::I32Clz => Self::I32Clz,
+            Instruction::I32Ctz => Self::I32Ctz,
+            Instruction::I32Popcnt => Self::I32Popcnt,
+            Instruction::I32Add => Self::I32Add,
+            Instruction::I32Sub => Self::I32Sub,
+            Instruction::I32Mul => Self::I32Mul,
+            Instruction::I32DivS => Self::I32DivS,
+            Instruction::I32DivU => Self::I32DivU,
+            Instruction::I32RemS => Self::I32RemS,
+            Instruction::I32RemU => Self::I32RemU,
+            Instruction::I32And => Self::I32And,
+            Instruction::I32Or => Self::I32Or,
+            Instruction::I32Xor => Self::I32Xor,
+            Instruction::I32Shl => Self::I32Shl,
+            Instruction::I32ShrS => Self::I32ShrS,
+            Instruction::I32ShrU => Self::I32ShrU,
+            Instruction::I32Rotl => Self::I32Rotl,
+            Instruction::I32Rotr => Self::I32Rotr,
+            Instruction::I64Clz => Self::I64Clz,
+            Instruction::I64Ctz => Self::I64Ctz,
+            Instruction::I64Popcnt => Self::I64Popcnt,
+            Instruction::I64Add => Self::I64Add,
+            Instruction::I64Sub => Self::I64Sub,
+            Instruction::I64Mul => Self::I64Mul,
+            Instruction::I64DivS => Self::I64DivS,
+            Instruction::I64DivU => Self::I64DivU,
+            Instruction::I64RemS => Self::I64RemS,
+            Instruction::I64RemU => Self::I64RemU,
+            Instruction::I64And => Self::I64And,
+            Instruction::I64Or => Self::I64Or,
+            Instruction::I64Xor => Self::I64Xor,
+            Instruction::I64Shl => Self::I64Shl,
+            Instruction::I64ShrS => Self::I64ShrS,
+            Instruction::I64ShrU => Self::I64ShrU,
+            Instruction::I64Rotl => Self::I64Rotl,
+            Instruction::I64Rotr => Self::I64Rotr,
+            Instruction::I32WrapI64 => Self::I32WrapI64,
+            Instruction::I64ExtendI32S => Self::I64ExtendI32S,
+            Instruction::I64ExtendI32U => Self::I64ExtendI32U,
             other => {
                 return Err(DecodeError::UnsupportedOperator {
                     offset: 0,
@@ -234,5 +231,86 @@ impl OpCode {
         };
 
         Ok(opcode)
+    }
+
+    pub fn load_shape(&self) -> (usize, bool, bool) {
+        match self {
+            Self::I32Load => (4, false, false),
+            Self::I64Load => (8, false, true),
+            Self::I32Load8S => (1, true, false),
+            Self::I32Load8U => (1, false, false),
+            Self::I32Load16S => (2, true, false),
+            Self::I32Load16U => (2, false, false),
+            Self::I64Load8S => (1, true, true),
+            Self::I64Load8U => (1, false, true),
+            Self::I64Load16S => (2, true, true),
+            Self::I64Load16U => (2, false, true),
+            Self::I64Load32S => (4, true, true),
+            Self::I64Load32U => (4, false, true),
+            _ => (0, false, false),
+        }
+    }
+
+    pub fn is_binary_compare(&self) -> bool {
+        matches!(
+            self,
+            Self::I32Eq
+                | Self::I32Ne
+                | Self::I32LtS
+                | Self::I32LtU
+                | Self::I32GtS
+                | Self::I32GtU
+                | Self::I32LeS
+                | Self::I32LeU
+                | Self::I32GeS
+                | Self::I32GeU
+                | Self::I64Eq
+                | Self::I64Ne
+                | Self::I64LtS
+                | Self::I64LtU
+                | Self::I64GtS
+                | Self::I64GtU
+                | Self::I64LeS
+                | Self::I64LeU
+                | Self::I64GeS
+                | Self::I64GeU
+        )
+    }
+
+    pub fn is_signed_compare(&self) -> bool {
+        matches!(
+            self,
+            Self::I32LtS
+                | Self::I32GtS
+                | Self::I32LeS
+                | Self::I32GeS
+                | Self::I64LtS
+                | Self::I64GtS
+                | Self::I64LeS
+                | Self::I64GeS
+        )
+    }
+
+    pub fn is_i64_compare(&self) -> bool {
+        matches!(
+            self,
+            Self::I64Eq
+                | Self::I64Ne
+                | Self::I64LtS
+                | Self::I64LtU
+                | Self::I64GtS
+                | Self::I64GtU
+                | Self::I64LeS
+                | Self::I64LeU
+                | Self::I64GeS
+                | Self::I64GeU
+        )
+    }
+
+    pub fn is_bitwise(&self) -> bool {
+        matches!(
+            self,
+            Self::I32And | Self::I32Or | Self::I32Xor | Self::I64And | Self::I64Or | Self::I64Xor
+        )
     }
 }

@@ -1,12 +1,12 @@
 # Security Policy & Threat Model
 
-This document describes the trust boundaries, attacker model, and mitigations for the Ananse zkVM. It covers the current state as of v0.2.0 and will be updated as subsequent versions introduce new attack surfaces---most notably the STARK prover and verifier, which do not exist in this release.
+This document describes the trust boundaries, attacker model, and mitigations for the Ananse zkVM. It covers the current state as of v0.2.1 and will be updated as subsequent versions introduce new attack surfaces---most notably the STARK prover and verifier, which do not exist in this release.
 
 Ananse is a research project. It has not been audited and is not ready for production use.
 
 ## Trust Boundaries
 
-v0.2.0 is the executable virtual machine. A module is untrusted input; the pipeline that runs it is trusted code:
+v0.2.1 is the executable virtual machine. A module is untrusted input; the pipeline that runs it is trusted code:
 
 ```text
 Module (.wasm/.wat) --> Decode & Validate --> Lift --> Execute --> Result + WASI journal
@@ -33,7 +33,7 @@ Each attacker class carries a **status**, so this document reads as a living led
 
 **Goal:** crash the decoder or executor, exhaust CPU or memory, smuggle in nondeterminism, or corrupt memory through a crafted module.
 
-**Status:** Mitigated@v0.2.0. Every vector below has an active check, exercised by the decoder, lift, and executor test suites.
+**Status:** Mitigated@v0.2.1. Every vector below has an active check, exercised by the decoder, lift, and executor test suites.
 
 | Attack vector                                                                         | Mitigation                                                                                                              | Location                          |
 | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
@@ -55,7 +55,7 @@ Each attacker class carries a **status**, so this document reads as a living led
 
 **Goal:** make the executor consume unbounded CPU time or memory.
 
-**Status:** Mitigated@v0.2.0 for recursion, register-file, and memory growth; unbounded loop time is Accepted-risk under the single-user CLI model.
+**Status:** Mitigated@v0.2.1 for recursion, register-file, and memory growth; unbounded loop time is Accepted-risk under the single-user CLI model.
 
 | Resource            | Limit                                | Enforcement               |
 | ------------------- | ------------------------------------ | ------------------------- |
@@ -67,7 +67,7 @@ Each attacker class carries a **status**, so this document reads as a living led
 
 ### Attacker 3: Adversarial proof
 
-**Status:** Not-yet-present. Ananse produces no proofs in v0.2.0, so there is no verifier to attack. When the FRI STARK prover and verifier ship, this class will document wrong-program substitution, tampered-trace, and forged-public-input vectors against the register-shaped AIR's constraint system.
+**Status:** Not-yet-present. Ananse produces no proofs in v0.2.1, so there is no verifier to attack. When the FRI STARK prover and verifier ship, this class will document wrong-program substitution, tampered-trace, and forged-public-input vectors against the register-shaped AIR's constraint system.
 
 ## Memory Safety
 

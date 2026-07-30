@@ -1,6 +1,6 @@
 [package]
 name = "ananse_executor"
-description = "Register-schedule interpreter for the Ananse zkVM"
+description = "Schedule-driven interpreter and reference semantics for the Ananse zkVM"
 keywords = ["wasm", "zero-knowledge", "zk", "zkvm"]
 categories = ["compilers", "cryptography", "wasm"]
 version.workspace = true
@@ -15,6 +15,4 @@ readme = "README.md"
 ananse_decoder = { workspace = true }
 ananse_lift = { workspace = true }
 
-p3-goldilocks = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
-wasmparser = { workspace = true }

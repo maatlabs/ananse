@@ -13,7 +13,7 @@ members = [
 default-members = ["crates/ananse"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.93"
 license = "MIT OR Apache-2.0"
@@ -22,12 +22,12 @@ homepage = "https://github.com/maatlabs/ananse"
 readme = "README.md"
 
 [workspace.dependencies]
-ananse_decoder = { path = "crates/ananse_decoder", version = "0.2.0" }
-ananse_lift = { path = "crates/ananse_lift", version = "0.2.0" }
-ananse_executor = { path = "crates/ananse_executor", version = "0.2.0" }
-ananse_trace = { path = "crates/ananse_trace", version = "0.2.0" }
-ananse_air = { path = "crates/ananse_air", version = "0.2.0" }
-ananse_wasi = { path = "crates/ananse_wasi", version = "0.2.0" }
+ananse_decoder = { path = "crates/ananse_decoder", version = "0.2.1" }
+ananse_lift = { path = "crates/ananse_lift", version = "0.2.1" }
+ananse_executor = { path = "crates/ananse_executor", version = "0.2.1" }
+ananse_trace = { path = "crates/ananse_trace", version = "0.2.1" }
+ananse_air = { path = "crates/ananse_air", version = "0.2.1" }
+ananse_wasi = { path = "crates/ananse_wasi", version = "0.2.1" }
 
 p3-field = "0.6"
 p3-goldilocks = "0.6"
@@ -35,8 +35,8 @@ p3-air = "0.6"
 p3-matrix = "0.6"
 clap = { version = "4.6", features = ["derive"] }
 thiserror = { version = "2", default-features = false }
-wasmparser = { version = "0.253", default-features = false, features = [
+wasmparser = { version = "0.255", default-features = false, features = [
     "validate",
     "features",
 ] }
-wat = "1.253"
+wat = "1.255"

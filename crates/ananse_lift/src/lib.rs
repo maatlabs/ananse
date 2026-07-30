@@ -1,7 +1,7 @@
 //! Static stack-to-register lift for the Ananse zkVM.
 //!
 //! Ananse proves WebAssembly directly with a register-shaped AIR. This crate is the
-//! analysis that makes that possible without compiling WASM away: it turns a
+//! analysis that makes that possible without compiling WASM away. It turns a
 //! validated [`Module`] into a [`LiftedProgram`] that records, for every program
 //! point, the operand-stack height, the depth-indexed register operands each
 //! instruction reads and writes, the per-function register-file width, and the
@@ -26,7 +26,7 @@ mod program;
 
 use ananse_decoder::Module;
 pub use error::LiftError;
-pub use program::{InstructionSchedule, LiftedFunction, LiftedProgram, Register, Successors};
+pub use program::{LiftedFunction, LiftedProgram, Register, Schedule, Successors};
 
 /// Result of stack-to-register lift operations.
 pub type Result<T> = core::result::Result<T, LiftError>;

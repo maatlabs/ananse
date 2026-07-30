@@ -26,7 +26,7 @@ pub use ananse_air as air;
 pub use ananse_decoder as decoder;
 use ananse_decoder::{DecodeError, Module, Word, WordType};
 pub use ananse_executor as executor;
-use ananse_executor::{Entry, ExecuteError, Execution, Host, NoHost, execute};
+use ananse_executor::{Entry, ExecuteError, ExecutionResult, Host, NoHost, execute};
 pub use ananse_lift as lift;
 pub use ananse_trace as trace;
 pub use ananse_wasi as wasi;
@@ -41,7 +41,7 @@ pub enum Error {
     /// The module failed to decode or validate.
     #[error(transparent)]
     Decode(#[from] DecodeError),
-    /// Execution failed---a trap, an unsupported operator, or a host error.
+    /// ExecutionResult failed---a trap, an unsupported operator, or a host error.
     #[error(transparent)]
     Execute(#[from] ExecuteError),
 }
@@ -104,7 +104,7 @@ impl<H: Host> Runtime<H> {
 
     /// Runs `entry` with `args` to completion, returning its results, exit
     /// status, and executed-step count.
-    pub fn call(&mut self, entry: &Entry, args: &[Word]) -> Result<Execution> {
+    pub fn call(&mut self, entry: &Entry, args: &[Word]) -> Result<ExecutionResult> {
         Ok(execute(&self.module, entry, args, &mut self.host, &mut ())?)
     }
 }
@@ -113,7 +113,7 @@ impl<H: Host> Runtime<H> {
 /// with `use ananse::prelude::*;`.
 pub mod prelude {
     pub use crate::decoder::{Module, Word, WordType};
-    pub use crate::executor::{Entry, Execution};
+    pub use crate::executor::{Entry, ExecutionResult};
     pub use crate::wasi::WasiSnapshotPreview1;
     pub use crate::{Error, Result, Runtime};
 }

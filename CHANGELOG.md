@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [0.2.1] - 2026-07-30
+
+A patch release focusing on idiomatic code improvements, module reorganization, documentation, and dependency hygiene. This release still executes and journals a program end-to-end; it does not, however, produce proofs yet---the FRI STARK prover and the `prove` / `verify` flow are the focus of the next release.
+
+### Added
+
+- **Refactored and re-modularized `ananse_executor`**, introducing new `runtime/` and `interpreter/` modules**:
+  - `runtime/`: defined new types (`Memory`, `Registers`, `Labels`, `OperandStack`); renamed `RtFrame` to `Label`, `Execution` to `ExecutionResult`, and `Arithmetic` to `Binary`;
+  - `interpreter/`: renamed `Eval` to `Completion`, `Outcome` to `StepOutcome`, and `Control` to `Signal`; extracted core memory read/write logic from `Interpreter::load/store` methods to `Memory::read/write` methods in the `runtime/` module; moved the main `execute` entry-point to crate root.
+  - `step.rs`: renamed from `record.rs`, retaining main type definitions while extracting unrelated code elsewhere.
+  - `entry.rs`: new module/home for the `Entry` type and `validate_args` function (extracted from `interpreter.rs`).
+- **`Instruction` type alias.** Aliased `wasmparser::Operator` as `Instruction` in `ananse_decoder`; re-exported and reused in `ananse_lift` and `ananse_executor`.
+
+### Changed
+
+- **`ananse_lift`**: Renamed `InstructionSchedule` to `Schedule`, `Slot` to `SuccessorSlot`, and `.instrs` struct fields to `.schedules`.
+- **`ananse_trace`**: Moved trace-generating `OpCode`-related helpers into `impl OpCode {}` of `ananse_decoder`.
+- **Minor refactors across member crates**: documentation, module re-organization, dependency hygiene, and idiomatic improvements.
+
+---
+
 ## [0.2.0] - 2026-07-05
 
 A ground-up rebuild from the v0.1.x tutorial runtime into a WebAssembly-native zero-knowledge virtual machine. Ananse now executes any program in the integer subset of WebAssembly-MVP end to end through a register-shaped engine built for STARK proving, exposed behind a new `ananse run` command and a library `Runtime`. This release executes and journals; it does not yet produce proofs---the FRI STARK prover and the `prove` / `verify` flow are the focus of the next release.
@@ -99,6 +120,7 @@ When adding entries to this changelog for future releases:
 3. **Audience**: Write for users, not developers (focus on impact, not implementation)
 4. **Links**: Add comparison links at the bottom: `[0.2.0]: https://github.com/maatlabs/ananse/compare/v0.1.1...v0.2.0`
 
+[0.2.1]: https://github.com/maatlabs/ananse/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/maatlabs/ananse/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/maatlabs/ananse/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/maatlabs/ananse/releases/tag/v0.1.0

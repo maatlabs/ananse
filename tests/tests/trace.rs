@@ -1,4 +1,4 @@
-use ananse_decoder::{Module, OpCode, Word};
+use ananse_decoder::{Felt, Module, OpCode, Word};
 use ananse_executor::{Entry, NoHost, Transition, execute};
 use ananse_lift::lift;
 use ananse_tests::{
@@ -11,7 +11,6 @@ use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING};
 use ananse_trace::{Trace, TraceError};
 use ananse_wasi::WasiSnapshotPreview1;
 use p3_field::PrimeCharacteristicRing;
-use p3_goldilocks::Goldilocks as Felt;
 
 fn column(trace: &Trace, index: usize) -> &[Felt] {
     trace.column_at(index).expect("column in range")
@@ -214,7 +213,7 @@ fn padding_rests_on_the_exit_sentinel_with_an_idle_bus() {
         .iter()
         .find(|f| f.func_index == func_index)
         .expect("lifted")
-        .instrs
+        .schedules
         .len();
     let trace = Trace::build(&program, records, &[], &[]).expect("build");
 

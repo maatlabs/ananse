@@ -17,7 +17,6 @@ ananse_wasi = { workspace = true }
 
 p3-air = { workspace = true }
 p3-field = { workspace = true }
-p3-goldilocks = { workspace = true }
 p3-matrix = { workspace = true }
 wasmparser = { workspace = true }
 wat.workspace = true

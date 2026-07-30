@@ -1,6 +1,6 @@
 # ananse_decoder
 
-WebAssembly module decoder and validator for the Ananse zkVM.
+WebAssembly (WASM) module decoder and validator for the Ananse zkVM.
 
 ## Role
 

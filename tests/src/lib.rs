@@ -5,14 +5,15 @@ use std::path::{Path, PathBuf};
 use ananse_air::{
     AnanseAir, NUM_CHALLENGES, QuadExt, build_permutation_trace, program_data, program_rom,
 };
-use ananse_decoder::{Module, Word, function_constants, function_opcodes, global_initializers};
+use ananse_decoder::{
+    Felt, Module, Word, function_constants, function_opcodes, global_initializers,
+};
 use ananse_executor::{Entry, execute};
 use ananse_lift::lift;
 use ananse_trace::Trace;
 use ananse_wasi::WasiSnapshotPreview1;
 use p3_air::{Air, BaseAir, DebugConstraintBuilder};
 use p3_field::PrimeCharacteristicRing;
-use p3_goldilocks::Goldilocks as Felt;
 use p3_matrix::Matrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_matrix::stack::ViewPair;

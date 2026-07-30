@@ -85,7 +85,7 @@ impl Host for WasiSnapshotPreview1 {
 /// Halts the program with the status code carried by `args = [code]`.
 fn proc_exit(import: &ImportEntry, args: &[Word]) -> Result<HostAction> {
     match args {
-        [code] => Ok(HostAction::Exit(as_u32(*code) as i32)),
+        [code] => Ok(HostAction::Exit(code.as_u32() as i32)),
         _ => Err(arity(import, "proc_exit", 1, args.len())),
     }
 }
@@ -96,19 +96,12 @@ fn proc_exit(import: &ImportEntry, args: &[Word]) -> Result<HostAction> {
 fn arguments(import: &ImportEntry, args: &[Word]) -> Result<[u32; 4]> {
     match args {
         [fd, iovs, iovs_len, nwritten] => Ok([
-            as_u32(*fd),
-            as_u32(*iovs),
-            as_u32(*iovs_len),
-            as_u32(*nwritten),
+            fd.as_u32(),
+            iovs.as_u32(),
+            iovs_len.as_u32(),
+            nwritten.as_u32(),
         ]),
         _ => Err(arity(import, "fd_write", 4, args.len())),
-    }
-}
-
-fn as_u32(word: Word) -> u32 {
-    match word {
-        Word::I32(bits) => bits,
-        Word::I64(bits) => bits as u32,
     }
 }
 

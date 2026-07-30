@@ -1,11 +1,11 @@
 //! The unified access-log trace: the executor -> prover artifact.
 //!
-//! Every operator's effect on the machine is a sequence of reads and writes over
+//! Every instruction's effect on the machine is a sequence of reads and writes over
 //! one flat address space that holds the operand stack, locals, globals, and linear
 //! memory alike. The trace records those accesses on a fixed-width value bus in
 //! execution order and, alongside, the same accesses sorted by address then time.
 //! Proving the two are a permutation of one another, and that the sorted view is
-//! internally consistent (every read returns the value the previous access to its
+//! internally consistent (i.e., every read returns the value the previous access to its
 //! address left), is the single argument that ties the whole machine together.
 
 use ananse_executor::{OpCode, RegAccess, StepRecord, Transition, Word};
@@ -51,8 +51,8 @@ impl ExecFrame {
 struct Access {
     address: u64,
     timestamp: u64,
-    lo: Felt,
-    hi: Felt,
+    low_limb: Felt,
+    high_limb: Felt,
     is_write: bool,
 }
 
@@ -70,6 +70,8 @@ pub struct Trace {
 }
 
 impl Trace {
+    /// Generates a trace from a single frame's execution: the lifted `program` that
+    /// scheduled it and the `records` it emitted, in execution order.
     pub fn build(
         program: &LiftedProgram,
         records: Vec<StepRecord>,
@@ -97,9 +99,9 @@ impl Trace {
         let accesses = access_stream(&records, exec_frame)?;
         validate(&accesses)?;
 
-        let halt_pc = func.instrs.len() as u32;
+        let halt_pc = func.schedules.len() as u32;
         let heights = func
-            .instrs
+            .schedules
             .iter()
             .map(|instr| instr.height_in)
             .collect::<Vec<_>>();
@@ -110,7 +112,7 @@ impl Trace {
             &accesses,
             &heights,
             halt_pc,
-            edge_count(func),
+            func.edge_count(),
         )?;
 
         Ok(Self {
@@ -124,43 +126,59 @@ impl Trace {
         })
     }
 
+    /// The record stream the trace was built from, in execution order.
     pub fn records(&self) -> &[StepRecord] {
         &self.records
     }
 
+    /// The column-major trace matrix: one inner vector per column, each of length
+    /// [`length`](Self::length).
     pub fn columns(&self) -> &[Vec<Felt>] {
         &self.columns
     }
 
+    /// The column at `index`, or `None` if it is out of range.
     pub fn column_at(&self, index: usize) -> Option<&[Felt]> {
         self.columns.get(index).map(Vec::as_slice)
     }
 
+    /// Number of columns in the trace, [`layout::main_width`].
     pub fn width(&self) -> usize {
         self.columns.len()
     }
 
+    /// Number of rows after power-of-two padding.
     pub fn length(&self) -> usize {
         self.length
     }
 
+    /// Number of executed instructions (unpadded rows).
     pub fn steps(&self) -> usize {
         self.steps
     }
 
+    /// Number of local slots in the traced frame (parameters plus declared locals).
     pub fn locals(&self) -> u32 {
         self.locals
     }
 
+    /// Number of global slots in the traced frame.
+    pub fn globals(&self) -> u32 {
+        self.globals
+    }
+
+    /// Register-file offset at which the operand stack begins: the locals followed by the globals.
     pub fn stack_base(&self) -> u32 {
         self.locals.saturating_add(self.globals)
     }
 
+    /// Returns the initial state of the execution trace.
     pub fn initial_state(&self) -> &[(u64, Felt, Felt)] {
         &self.initial
     }
 }
 
+/// Initial state of the execution trace.
 fn initial_state(frame: ExecFrame, args: &[Word], globals: &[Word]) -> Vec<(u64, Felt, Felt)> {
     (0..frame.width)
         .map(|offset| {
@@ -171,12 +189,14 @@ fn initial_state(frame: ExecFrame, args: &[Word], globals: &[Word]) -> Vec<(u64,
             } else {
                 None
             };
-            let (lo, hi) = value.map_or((Felt::ZERO, Felt::ZERO), |word| word.to_limbs());
-            (REGISTER_REGION + offset as u64, lo, hi)
+            let (low_limb, high_limb) =
+                value.map_or((Felt::ZERO, Felt::ZERO), |word| word.to_limbs());
+            (REGISTER_REGION + offset as u64, low_limb, high_limb)
         })
         .collect()
 }
 
+/// Flattens the record stream into the unified access log in execution order.
 fn access_stream(records: &[StepRecord], exec_frame: ExecFrame) -> Result<Vec<Access>> {
     records
         .iter()
@@ -186,14 +206,17 @@ fn access_stream(records: &[StepRecord], exec_frame: ExecFrame) -> Result<Vec<Ac
         .map(|rows| rows.into_iter().flatten().collect())
 }
 
+/// The accesses one instruction performs, in canonical bus order, each carrying its
+/// `step * BUS_SLOTS + slot` timestamp. Fails if the instruction performs more accesses
+/// than the bus has slots.
 fn row_accesses(step: usize, record: &StepRecord, exec_frame: ExecFrame) -> Result<Vec<Access>> {
     let reg = |a: &RegAccess, is_write: bool| -> Result<Access> {
-        let (lo, hi) = a.value.to_limbs();
+        let (low_limb, high_limb) = a.value.to_limbs();
         Ok(Access {
             address: register_address(a.reg, exec_frame)?,
             timestamp: 0,
-            lo,
-            hi,
+            low_limb,
+            high_limb,
             is_write,
         })
     };
@@ -202,8 +225,8 @@ fn row_accesses(step: usize, record: &StepRecord, exec_frame: ExecFrame) -> Resu
         Ok(Access {
             address: m.address,
             timestamp: 0,
-            lo: Felt::new(m.value & 0xFFFF_FFFF),
-            hi: Felt::new(m.value >> 32),
+            low_limb: Felt::new(m.value & 0xFFFF_FFFF),
+            high_limb: Felt::new(m.value >> 32),
             is_write: m.store,
         })
     });
@@ -223,11 +246,16 @@ fn row_accesses(step: usize, record: &StepRecord, exec_frame: ExecFrame) -> Resu
     Ok(accesses)
 }
 
+/// The address of a register operand in the unified space: its offset within the
+/// frame's three-bank register file, lifted above the linear-memory range so it
+/// cannot alias a byte address.
 fn register_address(register: Register, exec_frame: ExecFrame) -> Result<u64> {
     let offset = resolve_register(register, exec_frame)?;
     Ok(REGISTER_REGION + offset as u64)
 }
 
+/// The register-file offset of the local or global slot an instruction touches, or
+/// zero for instructions that touch none.
 fn immediate_offset(record: &StepRecord, exec_frame: ExecFrame) -> Result<u64> {
     record
         .reads
@@ -239,6 +267,8 @@ fn immediate_offset(record: &StepRecord, exec_frame: ExecFrame) -> Result<u64> {
         .map(|offset| offset.unwrap_or(0))
 }
 
+/// Resolves a register operand to its offset within the register bank, mirroring the
+/// lift's three-bank layout: locals, then globals, then the operand stack.
 fn resolve_register(register: Register, exec_frame: ExecFrame) -> Result<usize> {
     let offset = match register {
         Register::Local(index) => Some(index as usize),
@@ -256,12 +286,16 @@ fn resolve_register(register: Register, exec_frame: ExecFrame) -> Result<usize> 
         })
 }
 
+/// Verifies read-consistency over the unified log.
 fn validate(accesses: &[Access]) -> Result<()> {
     let mut sorted = accesses.to_vec();
     sorted.sort_by_key(|a| (a.address, a.timestamp));
     for pair in sorted.windows(2) {
         let (prev, cur) = (pair[0], pair[1]);
-        if cur.address == prev.address && !cur.is_write && (cur.lo, cur.hi) != (prev.lo, prev.hi) {
+        if cur.address == prev.address
+            && !cur.is_write
+            && (cur.low_limb, cur.high_limb) != (prev.low_limb, prev.high_limb)
+        {
             return Err(TraceError::AccessInconsistent {
                 address: cur.address,
                 step: (cur.timestamp / BUS_SLOTS as u64) as usize,
@@ -271,6 +305,8 @@ fn validate(accesses: &[Access]) -> Result<()> {
     Ok(())
 }
 
+/// Generates the column-major matrix: the execution-order value bus, the
+/// address-sorted access log, and the control columns and selectors.
 fn build_columns(
     records: &[StepRecord],
     exec_frame: ExecFrame,
@@ -308,8 +344,8 @@ fn build_columns(
         }
 
         if let Some(write) = row_accesses.iter().find(|access| access.is_write) {
-            write_value_bytes(&mut columns, RC_WRITE_LO, row, write.lo);
-            write_value_bytes(&mut columns, RC_WRITE_HI, row, write.hi);
+            write_value_bytes(&mut columns, RC_WRITE_LO, row, write.low_limb);
+            write_value_bytes(&mut columns, RC_WRITE_HI, row, write.high_limb);
         }
 
         fill_comparison(&mut columns, row, record);
@@ -341,11 +377,11 @@ fn write_bytes(columns: &mut [Vec<Felt>], base: usize, row: usize, value: u64, c
 
 fn fill_comparison(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord) {
     let limbs = |word: Word| {
-        let (lo, hi) = word.to_limbs();
-        (lo.as_canonical_u64(), hi.as_canonical_u64())
+        let (low_limb, high_limb) = word.to_limbs();
+        (low_limb.as_canonical_u64(), high_limb.as_canonical_u64())
     };
     match record.opcode {
-        op if is_binary_compare(op) => {
+        op if op.is_binary_compare() => {
             let (Some(rhs), Some(lhs)) = (record.reads.first(), record.reads.get(1)) else {
                 return;
             };
@@ -353,8 +389,8 @@ fn fill_comparison(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord) {
             let (rlo, rhi) = limbs(rhs.value);
             fill_borrow(columns, row, (llo, lhi), (rlo, rhi));
             fill_is_zero(columns, row, (llo, lhi), (rlo, rhi));
-            if is_signed_compare(op) {
-                let wide = is_i64_compare(op);
+            if op.is_signed_compare() {
+                let wide = op.is_i64_compare();
                 fill_sign(
                     columns,
                     RC_SIGN_A,
@@ -390,14 +426,14 @@ fn fill_pcdata(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord, func:
     match record.opcode {
         OpCode::I32Const | OpCode::I64Const => {
             if let Some(write) = record.writes.first() {
-                let (lo, hi) = write.value.to_limbs();
-                columns[PC_DATA_A][row] = lo;
-                columns[PC_DATA_B][row] = hi;
+                let (low_limb, high_limb) = write.value.to_limbs();
+                columns[PC_DATA_A][row] = low_limb;
+                columns[PC_DATA_B][row] = high_limb;
             }
         }
         OpCode::If | OpCode::BrIf => {
             if let Some(Successors::Branch { taken, not_taken }) = func
-                .instrs
+                .schedules
                 .get(record.pc as usize)
                 .map(|instr| &instr.successors)
             {
@@ -444,72 +480,16 @@ fn fill_sign(columns: &mut [Vec<Felt>], rc_base: usize, sign_col: usize, row: us
     columns[wit(sign_col)][row] = Felt::new(sign);
 }
 
-fn is_binary_compare(op: OpCode) -> bool {
-    matches!(
-        op,
-        OpCode::I32Eq
-            | OpCode::I32Ne
-            | OpCode::I32LtS
-            | OpCode::I32LtU
-            | OpCode::I32GtS
-            | OpCode::I32GtU
-            | OpCode::I32LeS
-            | OpCode::I32LeU
-            | OpCode::I32GeS
-            | OpCode::I32GeU
-            | OpCode::I64Eq
-            | OpCode::I64Ne
-            | OpCode::I64LtS
-            | OpCode::I64LtU
-            | OpCode::I64GtS
-            | OpCode::I64GtU
-            | OpCode::I64LeS
-            | OpCode::I64LeU
-            | OpCode::I64GeS
-            | OpCode::I64GeU
-    )
-}
-
-fn is_signed_compare(op: OpCode) -> bool {
-    matches!(
-        op,
-        OpCode::I32LtS
-            | OpCode::I32GtS
-            | OpCode::I32LeS
-            | OpCode::I32GeS
-            | OpCode::I64LtS
-            | OpCode::I64GtS
-            | OpCode::I64LeS
-            | OpCode::I64GeS
-    )
-}
-
-fn is_i64_compare(op: OpCode) -> bool {
-    matches!(
-        op,
-        OpCode::I64Eq
-            | OpCode::I64Ne
-            | OpCode::I64LtS
-            | OpCode::I64LtU
-            | OpCode::I64GtS
-            | OpCode::I64GtU
-            | OpCode::I64LeS
-            | OpCode::I64LeU
-            | OpCode::I64GeS
-            | OpCode::I64GeU
-    )
-}
-
 fn fill_bitwise(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord) {
-    if !is_bitwise(record.opcode) {
+    if !record.opcode.is_bitwise() {
         return;
     }
     let (Some(rhs), Some(lhs)) = (record.reads.first(), record.reads.get(1)) else {
         return;
     };
     let bits = |word: Word| {
-        let (lo, hi) = word.to_limbs();
-        lo.as_canonical_u64() | (hi.as_canonical_u64() << 32)
+        let (low_limb, high_limb) = word.to_limbs();
+        low_limb.as_canonical_u64() | (high_limb.as_canonical_u64() << 32)
     };
     let (left, right) = (bits(lhs.value), bits(rhs.value));
     for i in 0..BW_NIBBLES {
@@ -521,18 +501,6 @@ fn fill_bitwise(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord) {
     }
 }
 
-fn is_bitwise(op: OpCode) -> bool {
-    matches!(
-        op,
-        OpCode::I32And
-            | OpCode::I32Or
-            | OpCode::I32Xor
-            | OpCode::I64And
-            | OpCode::I64Or
-            | OpCode::I64Xor
-    )
-}
-
 fn fill_popcount(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord) {
     if !matches!(record.opcode, OpCode::I32Popcnt | OpCode::I64Popcnt) {
         return;
@@ -540,8 +508,8 @@ fn fill_popcount(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord) {
     let Some(operand) = record.reads.first() else {
         return;
     };
-    let (lo, hi) = operand.value.to_limbs();
-    let bits = lo.as_canonical_u64() | (hi.as_canonical_u64() << 32);
+    let (low_limb, high_limb) = operand.value.to_limbs();
+    let bits = low_limb.as_canonical_u64() | (high_limb.as_canonical_u64() << 32);
     for i in 0..POPCNT_BYTES {
         let byte = (bits >> (8 * i)) & 0xff;
         columns[POPCNT_BYTE_BASE + i][row] = Felt::new(byte);
@@ -549,14 +517,16 @@ fn fill_popcount(columns: &mut [Vec<Felt>], row: usize, record: &StepRecord) {
     }
 }
 
+/// Writes one access onto its value-bus slot.
 fn write_bus_slot(columns: &mut [Vec<Felt>], base: usize, row: usize, access: Access) {
     columns[base + slot::ADDR][row] = Felt::new(access.address);
-    columns[base + slot::LO][row] = access.lo;
-    columns[base + slot::HI][row] = access.hi;
+    columns[base + slot::LO][row] = access.low_limb;
+    columns[base + slot::HI][row] = access.high_limb;
     columns[base + slot::IS_WRITE][row] = boolean(access.is_write);
     columns[base + slot::ACTIVE][row] = Felt::ONE;
 }
 
+/// Lays the address-sorted access log across the trace, [`BUS_SLOTS`] entries per row.
 fn fill_sorted_log(columns: &mut [Vec<Felt>], accesses: &[Access]) -> Result<()> {
     let mut sorted = accesses.to_vec();
     sorted.sort_by_key(|a| (a.address, a.timestamp));
@@ -566,8 +536,8 @@ fn fill_sorted_log(columns: &mut [Vec<Felt>], accesses: &[Access]) -> Result<()>
         let base = sorted_slot(slot_index);
         columns[base + sorted::ADDR][row] = Felt::new(access.address);
         columns[base + sorted::TS][row] = Felt::new(access.timestamp);
-        columns[base + sorted::LO][row] = access.lo;
-        columns[base + sorted::HI][row] = access.hi;
+        columns[base + sorted::LO][row] = access.low_limb;
+        columns[base + sorted::HI][row] = access.high_limb;
         columns[base + sorted::IS_WRITE][row] = boolean(access.is_write);
         columns[base + sorted::ACTIVE][row] = Felt::ONE;
 
@@ -599,22 +569,4 @@ fn fill_sorted_log(columns: &mut [Vec<Felt>], accesses: &[Access]) -> Result<()>
 /// A Boolean value; One if `flag`, zero otherwise.
 fn boolean(flag: bool) -> Felt {
     if flag { Felt::ONE } else { Felt::ZERO }
-}
-
-fn edge_count(function: &LiftedFunction) -> usize {
-    let targets = function
-        .instrs
-        .iter()
-        .map(|sched| match &sched.successors {
-            Successors::Fallthrough
-            | Successors::Jump(_)
-            | Successors::Return
-            | Successors::Trap => 1,
-            Successors::Branch { .. } => 2,
-            Successors::Table { targets, .. } => targets.len().saturating_add(1),
-        })
-        .sum::<usize>();
-    targets
-        .saturating_add(function.instrs.len())
-        .saturating_add(1)
 }

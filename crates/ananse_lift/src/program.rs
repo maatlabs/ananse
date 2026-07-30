@@ -23,18 +23,41 @@ pub struct LiftedFunction {
     /// Width of the register file, `locals_count + globals_count + max_stack_height`.
     pub reg_file_width: u32,
     /// Per-program-point instruction schedule in body order.
-    pub instrs: Vec<InstructionSchedule>,
+    pub schedules: Vec<Schedule>,
+}
+
+impl LiftedFunction {
+    /// An upper bound on the program ROM's edge count: one edge per successor target at
+    /// every program point, one extra per point for a possible call-to-halt edge, and
+    /// the halt self-loop.
+    pub fn edge_count(&self) -> usize {
+        let targets = self
+            .schedules
+            .iter()
+            .map(|sched| match &sched.successors {
+                Successors::Fallthrough
+                | Successors::Jump(_)
+                | Successors::Return
+                | Successors::Trap => 1,
+                Successors::Branch { .. } => 2,
+                Successors::Table { targets, .. } => targets.len().saturating_add(1),
+            })
+            .sum::<usize>();
+        targets
+            .saturating_add(self.schedules.len())
+            .saturating_add(1)
+    }
 }
 
 /// The static schedule for a single WebAssembly instruction.
 ///
-/// One [`InstructionSchedule`] is emitted per operator in body order, so
-/// `instrs[i].pc == i`. It records the operand-stack height entering the
+/// A single instruction schedule is emitted per operator/instruction in body order,
+/// so `schedules[i].pc == i`. It records the operand-stack height entering the
 /// instruction, the register operands it reads and writes, and where control
 /// flows next.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InstructionSchedule {
-    /// Program point: the operator's zero-based index within the function body.
+pub struct Schedule {
+    /// Program point: the instruction's zero-based index within the function body.
     pub pc: u32,
     /// Operand-stack height immediately before the instruction executes.
     pub height_in: u32,
@@ -98,4 +121,94 @@ pub enum Successors {
     Return,
     /// The instruction traps unconditionally (`unreachable`).
     Trap,
+}
+
+/// A WebAssembly structured-control frame, tracked as the lift walks a body.
+pub struct CtrlFrame {
+    /// Input values a branch target carries to this label. Used by
+    /// loops (the label is the loop header).
+    pub in_arity: u32,
+    /// Output values a branch target carries to this label. Used by
+    /// non-loops (the label is past the matching `end`).
+    pub out_arity: u32,
+    /// Operand-stack height at frame entry, below the frame's inputs.
+    pub floor: u32,
+    /// Whether the current point in this frame is unreachable (dead code).
+    pub unreachable: bool,
+    /// `Some(header_pc)` for a `loop`, whose branch target is its own header;
+    /// `None` for forward-closing frames.
+    pub loop_header: Option<u32>,
+    /// Forward branches awaiting this frame's continuation, patched at `end`.
+    pub fixups: Vec<Fixup>,
+    /// For an `if` frame, the `if` instruction whose `not_taken` target is still
+    /// pending an `else` or `end`.
+    pub if_instr: Option<usize>,
+}
+
+/// A forward branch whose target becomes known when its frame closes.
+pub struct Fixup {
+    /// Index of the instruction whose successor target must be patched.
+    pub instr_index: usize,
+    /// Which successor field of that instruction to patch.
+    pub slot: SuccessorSlot,
+}
+
+pub enum SuccessorSlot {
+    Jump,
+    BranchTaken,
+    TableEntry(usize),
+    TableDefault,
+}
+
+/// The stack effect and register touches of a non-control value instruction.
+pub struct ValueEffect {
+    pub pops: u32,
+    pub pushes: u32,
+    pub bank_read: Option<Register>,
+    pub bank_write: Option<Register>,
+    /// `local.tee`: reads the operand-stack top and writes a local while leaving
+    /// the top in place, so its stack slot is not rewritten.
+    pub is_tee: bool,
+}
+
+impl ValueEffect {
+    pub fn stack(pops: u32, pushes: u32) -> Self {
+        Self {
+            pops,
+            pushes,
+            bank_read: None,
+            bank_write: None,
+            is_tee: false,
+        }
+    }
+
+    pub fn bank_read(reg: Register) -> Self {
+        Self {
+            pops: 0,
+            pushes: 1,
+            bank_read: Some(reg),
+            bank_write: None,
+            is_tee: false,
+        }
+    }
+
+    pub fn bank_write(reg: Register) -> Self {
+        Self {
+            pops: 1,
+            pushes: 0,
+            bank_read: None,
+            bank_write: Some(reg),
+            is_tee: false,
+        }
+    }
+
+    pub fn tee(reg: Register) -> Self {
+        Self {
+            pops: 1,
+            pushes: 1,
+            bank_read: None,
+            bank_write: Some(reg),
+            is_tee: true,
+        }
+    }
 }
