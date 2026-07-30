@@ -46,7 +46,6 @@ version = "0.2.1"
 dependencies = [
  "ananse_decoder",
  "ananse_lift",
- "p3-goldilocks",
  "thiserror",
 ]
 
@@ -71,7 +70,6 @@ dependencies = [
  "ananse_wasi",
  "p3-air",
  "p3-field",
- "p3-goldilocks",
  "p3-matrix",
  "wasmparser",
  "wat",

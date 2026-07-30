@@ -1,5 +1,5 @@
 use ananse_air::{AnanseAir, pack_edge, program_rom};
-use ananse_decoder::{Module, OpCode, Word, function_opcodes};
+use ananse_decoder::{Felt, Module, OpCode, Word, function_opcodes};
 use ananse_executor::{Entry, Transition, execute};
 use ananse_lift::{Register, lift};
 use ananse_tests::{
@@ -14,7 +14,6 @@ use ananse_trace::layout::{
 use ananse_trace::selector::{NUM_SELECTORS, SEL_PADDING, opcode_index};
 use ananse_wasi::WasiSnapshotPreview1;
 use p3_field::PrimeCharacteristicRing;
-use p3_goldilocks::Goldilocks as Felt;
 
 fn is_arithmetic(opcode: OpCode) -> bool {
     matches!(

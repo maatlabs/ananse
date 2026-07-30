@@ -1,10 +1,9 @@
-use ananse_decoder::{Module, OpCode, Word, function_opcodes};
+use ananse_decoder::{Felt, Module, OpCode, Word, function_opcodes};
 use ananse_executor::{Entry, ExecuteError, MemAccess, NoHost, StepRecord, Trap, execute};
 use ananse_lift::{Register, lift};
 use ananse_tests::{FIXTURE_FILES, WAT_SNIPPETS, wat_from_example, wat_from_fixture, wat_from_str};
 use ananse_wasi::WasiSnapshotPreview1;
 use p3_field::PrimeCharacteristicRing;
-use p3_goldilocks::Goldilocks as Felt;
 
 /// Runs a module from its automatic entry point, collecting the record stream.
 fn records(bytes: &[u8]) -> Vec<StepRecord> {
