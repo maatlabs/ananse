@@ -1,9 +1,8 @@
-//! Register-shaped AIR for the Ananse zkVM.
+//! Register-shaped AIR (algebraic intermediate representation) for the Ananse zkVM.
 //!
-//! Ananse proves WebAssembly directly against a register-shaped algebraic
-//! intermediate representation. This crate defines [`AnanseAir`], the single
-//! [`Air`](p3_air::Air) the STARK prover and verifier evaluate against the trace
-//! [`ananse_trace`] produces.
+//! This crate defines [`AnanseAir`], the single [`Air`](p3_air::Air) the STARK
+//! prover and verifier evaluate against the trace [`ananse_trace`] produces, enabling
+//! direct proving/verifcation of WebAssembly.
 
 #![forbid(unsafe_code)]
 
@@ -25,7 +24,7 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 pub use rom::{pack_edge, program_data, program_rom};
 
-/// Result alias for AIR operations.
+/// Result of AIR operations.
 pub type Result<T> = core::result::Result<T, AirError>;
 
 /// The prime field known as Goldilocks, defined as `F_p` where `p = 2^64 - 2^32 + 1`.

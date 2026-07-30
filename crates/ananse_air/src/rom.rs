@@ -22,6 +22,9 @@ pub(crate) const HEIGHT_PLACE: u64 = NEXT_PC_PLACE * PC_RADIX;
 /// Place value of the `imm` (local/global offset) digit.
 pub(crate) const IMM_PLACE: u64 = HEIGHT_PLACE * REG_RADIX;
 
+/// Builds the program ROM for a lifted function: every valid schedule edge
+/// `(pc, opcode, next_pc, height, imm)` packed into one field element, sorted and
+/// deduplicated so the prover and verifier produce a byte-identical table.
 pub fn program_rom(opcodes: &[OpCode], function: &LiftedFunction) -> Result<Vec<Felt>> {
     let body_len = function.schedules.len();
     if opcodes.len() != body_len {
@@ -107,6 +110,10 @@ pub fn program_data(
     Ok(entries)
 }
 
+/// Packs a single executed edge `(pc, opcode, next_pc, height, imm)` into its ROM
+/// element, or `None` if any component lies outside the injective range. The lookup
+/// side packs each executed row's edge with this and checks membership against
+/// [`program_rom()`]'s table.
 pub fn pack_edge(pc: u32, opcode_id: usize, next_pc: u32, height: u32, imm: u32) -> Option<Felt> {
     let opcode_id = u64::try_from(opcode_id).ok()?;
     let (pc, next_pc, height, imm) = (
@@ -126,6 +133,8 @@ pub fn pack_edge(pc: u32, opcode_id: usize, next_pc: u32, height: u32, imm: u32)
     pack(pc, opcode_id, next_pc, height, imm).map(Felt::new)
 }
 
+/// Packs one schedule edge into a field-element value. Returns `None` only if a
+/// digit exceeds its radix, which [`program_rom()`] rules out up front.
 fn pack(pc: u64, opcode_id: u64, next_pc: u64, height: u64, imm: u64) -> Option<u64> {
     imm.checked_mul(IMM_PLACE)?
         .checked_add(height.checked_mul(HEIGHT_PLACE)?)?
@@ -134,6 +143,9 @@ fn pack(pc: u64, opcode_id: u64, next_pc: u64, height: u64, imm: u64) -> Option<
         .checked_add(opcode_id)
 }
 
+/// The register-file offset of the local or global slot the scheduled instruction at
+/// `pc` touches, or zero when it touches none. Mirrors the trace's resolution: a
+/// local keeps its index, a global sits above the locals.
 fn immediate_offset(function: &LiftedFunction, pc: usize) -> u64 {
     let schedule = &function.schedules[pc];
     schedule
@@ -150,6 +162,8 @@ fn immediate_offset(function: &LiftedFunction, pc: usize) -> u64 {
         .unwrap_or(0)
 }
 
+/// The in-body successor program points an instruction can move control to. Terminal
+/// successors collapse to the exit sentinel `halt_pc`.
 fn successor_targets(successors: &Successors, pc: u64, halt_pc: u64) -> Vec<u64> {
     match successors {
         // `pc < PC_RADIX`, so the fall-through target cannot overflow.
